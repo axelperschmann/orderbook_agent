@@ -1,0 +1,222 @@
+from tqdm import tqdm
+import pandas as pd
+import numpy as np
+import gzip
+import json
+import math
+import matplotlib.pyplot as plt
+
+def discretize_orderbook(data, range_factor=1.3, num_samples=51):
+    assert isinstance(data, pd.DataFrame)
+    assert isinstance(num_samples, int)
+    assert num_samples > 1, "num_samples must be larger than 1, not '{}'".format(num_samples)
+    assert num_samples%2 == 1, "please select uneven number of samples, not '{}'".format(num_samples)
+    assert isinstance(range_factor, float) or isinstance(range_factor, int)
+    assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+
+    
+    sample_idx = np.logspace(-1, 1, base=range_factor, num=num_samples)
+    indices = []
+    for p in sample_idx:
+        # sample full orderbook for every specified norm_Price
+        if p < 1:
+            # print("len", data[data.norm_Price>p].index[0])
+            indices.append(data[data.norm_Price>p].index[0])
+        elif p > 1:
+            # print("len", len(data[data.norm_Price<p]))
+            # print("x", data[data.norm_Price<p].index[-1])
+            indices.append(data[data.norm_Price<p].index[-1])
+        else:
+            indices.append(data[data.norm_Price==p].index[0])
+            
+    new_data = data.iloc[indices].copy()
+    new_data.reset_index(inplace=True, drop=True)
+    return new_data
+
+def log_mean(x, y):
+    assert isinstance(x, int) or isinstance(x, float)
+    assert isinstance(y, int) or isinstance(y, float)
+    return (x - y) / (math.log(x) - math.log(y))
+
+def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
+, num_samples=None, verbose=True):
+    assert len(datafiles)>0
+    assert isinstance(currency_pair, str)
+    assert isinstance(outfile, str)
+    assert isinstance(overwrite, bool)
+    assert isinstance(num_samples, int) or not num_samples, "num_samples must be an integer or None, not {}".format(type(num_samples))
+    if num_samples:
+        assert range_factor, 'Please specify range_factor for discretization of orderbook'
+        assert num_samples > 1, "num_samples must be larger than 1, not '{}'".format(num_samples)
+        assert num_samples%2 == 1, "please select uneven number of samples, not '{}'".format(num_samples)
+    assert isinstance(range_factor, float) or isinstance(range_factor, int) or not range_factor
+    if range_factor:
+        assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+    assert isinstance(verbose, bool)
+
+    if overwrite:
+        filemode = "wb"
+        if verbose:    
+            print("Orderbook content will be written to '{}'".format(outfile))
+    else:
+        filemode = "ab"
+        if verbose:    
+            print("Orderbook content will be appended to '{}'".format(outfile))
+    
+    with open(outfile, filemode) as f_out:
+            
+        for fullpath in tqdm(datafiles):
+            with gzip.open(fullpath, 'r') as f_in:
+                df = json.load(f_in)
+
+            # extract all ask orders
+            price  = [float(x[0]) for x in df['orderbook_' + currency_pair]['asks']]
+            lowest_ask = price[0]
+            amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+            volume = [float(x[0]) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+            asks = pd.DataFrame({'Amount': pd.Series(amount),
+                                 'Price': price,
+                                 'Type':'ask',
+                                 'Volume':volume,
+                                 'VolumeAcc': 0})
+
+            # extract all bid orders
+            price  = [float(x[0]) for x in df['orderbook_' + currency_pair]['bids']]
+            highest_bid = price[0]
+            amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+            volume = [float(x[0]) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+            bids = pd.DataFrame({'Amount': pd.Series(amount),
+                                 'Price': price,
+                                 'Type':'bid',
+                                 'Volume':volume,
+                                 'VolumeAcc': 0})
+
+            # compute log_mean (center between lowest_ask and highest_bid)
+            center_log = log_mean(lowest_ask, highest_bid)
+            # spread = lowest_ask - highest_bid
+
+            center = pd.DataFrame({'Amount': 0,
+                                 'Price': center_log,
+                                 'Type':'center',
+                                 'Volume':0,
+                                 'VolumeAcc': 0}, index=[0])
+
+
+            # concat ask, center and bid DataFrames
+            df2 = pd.concat([asks, bids, center])
+            df2 = df2.sort_values("Price")
+            df2.index.rename(df['timestamp'], inplace=True)
+            df2.reset_index(inplace=True, drop=True)
+
+            # compute accumulated order volume
+            df2['VolumeAcc'].loc[df2.Type=='bid'] = (df2[df2.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
+            df2['VolumeAcc'].loc[df2.Type=='ask'] = (df2[df2.Type=='ask'].Volume).cumsum().values
+
+            # normalization
+            df2['norm_Price'] = df2.Price / center_log
+
+            if num_samples:
+                # discretize orderbook
+                print(num_samples, range_factor)
+                df2 = discretize_orderbook(data=df2, range_factor=range_factor, num_samples=num_samples)
+            if range_factor:
+                # limited price range relative to center_log or norm_Price
+                df2 = df2[(df2['norm_Price'] <= range_factor) & (df2['norm_Price'] >= range_factor**-1)]
+            
+            obj = {'dataframe': df2.to_json(double_precision=15), 'timestamp': df['timestamp']}
+
+            f_out.write(json.dumps(obj) + "\n")
+    if verbose:
+        if overwrite:
+            print("Successfully created file '{}'".format(outfile))
+        else:
+            print("Successfully appended {} lines to file '{}'".format(len(datafiles), outfile))
+
+
+def load_orderbook_snapshot(infile, verbose=True):
+    assert isinstance(infile, str)
+    assert isinstance(verbose, bool)
+    
+    timestamps = []
+    data = []
+    with open(infile, "r+") as f:
+        read_data = f.readlines()
+
+    for line in tqdm(range(len(read_data))):
+        dictionary = json.loads(read_data[line])
+        df = pd.read_json(dictionary['dataframe'] , precise_float=True)
+        df.sort_index(inplace=True)
+
+        data.append(df)
+        timestamps.append( dictionary['timestamp'])
+
+    if verbose:
+        print("Loaded Orderbooks: {}".format(len(data)))
+    return data, timestamps
+
+def plot_orderbook(data, title, normalized=False, range_factor=None, outfile=None, fileformat='svg'):
+    assert isinstance(data, pd.DataFrame)
+    assert isinstance(title, str) or isinstance(title, unicode)
+    assert isinstance(normalized, bool)
+    assert isinstance(range_factor, float) or isinstance(range_factor, int) or not range_factor
+    if range_factor:
+        assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+    assert isinstance(outfile, str) or not outfile
+    if outfile:
+        if outfile[-(len(fileformat)+1):] != '.{}'.format(fileformat):
+            outfile = "{}.{}".format(outfile, fileformat)
+    assert isinstance(fileformat, str)
+    
+    
+    plt.figure(figsize=(16,8))
+    if normalized:
+        if range_factor:
+            xlim = (1./range_factor, range_factor)
+        else:
+            xlim = (0, data.norm_Price.values[-1])
+        
+        bids_lim = data[data.norm_Price>xlim[0]].VolumeAcc.values[0]
+        asks_lim = data[data.norm_Price<xlim[1]].VolumeAcc.values[-1]
+        y_factor = asks_lim + bids_lim
+        
+        asks_x = data[data.Type == 'ask'].norm_Price.values
+        asks_y = data[data.Type == 'ask'].VolumeAcc / y_factor
+        bids_x = data[data.Type == 'bid'].norm_Price.values
+        bids_y = data[data.Type == 'bid'].VolumeAcc / y_factor
+        
+        plt.ylim((0,1))
+        
+    else:
+        center = data[data.Type == 'center'].Price.values[0]        
+        if range_factor:
+            xlim = (center/range_factor, center*range_factor)
+        else:
+            xlim = (0, data.Price.values[-1])
+        
+        bids_lim = data[data.Price>xlim[0]].VolumeAcc.values[0]
+        asks_lim = data[data.Price<xlim[1]].VolumeAcc.values[-1]
+        y_factor = asks_lim + bids_lim
+        
+        asks_x = data[data.Type == 'ask'].Price.values
+        asks_y = data[data.Type == 'ask'].VolumeAcc
+        bids_x = data[data.Type == 'bid'].Price.values
+        bids_y = data[data.Type == 'bid'].VolumeAcc
+        
+        plt.ylim((0,y_factor))
+
+    plt.plot(bids_x, bids_y, color='g', label='VolumeAcc Bid')
+    plt.plot(asks_x, asks_y, color='r', label='VolumeAcc Ask')
+    plt.fill_between(bids_x, bids_y, 0, color='g', alpha=0.1)
+    plt.fill_between(asks_x, asks_y, 0, color='r', alpha=0.1)
+    
+    plt.xlim(xlim)
+    plt.suptitle("{} - {}".format(title, data[data.Type=='center'].Price.values[0]))
+    plt.legend()
+    
+    if outfile:
+        plt.savefig(outfile, format='svg')
+        print("Successfully saved'{}'".format(outfile))
+        plt.close()
+    else:
+        plt.show()
+        plt.close()
