@@ -41,7 +41,7 @@ def log_mean(x, y):
         return x
     return (x - y) / (math.log(x) - math.log(y))
 
-def place_order(orderbook, amount, limit=None):
+def place_order(orderbook, amount, limit=None, verbose=True):
     assert isinstance(orderbook, pd.DataFrame)
     assert isinstance(amount, float) or isinstance(amount, int)
     assert amount != 0
@@ -98,8 +98,9 @@ def place_order(orderbook, amount, limit=None):
         info['slippage'] = abs((bid * info['amount_fulfilled']) + info['cashflow'])
 
     info['amount_unfulfilled'] = amount
-    if abs(amount) > 0:
-        print("Could not trade all shares. {} left".format(amount))
+    if if verbose
+        if abs(amount) > 0:
+            print("Could not trade all shares. {} left".format(amount))
     
     return info
 
