@@ -36,10 +36,13 @@ def discretize_orderbook(data, range_factor=1.3, num_samples=51):
 def log_mean(x, y):
     assert isinstance(x, int) or isinstance(x, float)
     assert isinstance(y, int) or isinstance(y, float)
+    
+    if x == y:
+        return x
     return (x - y) / (math.log(x) - math.log(y))
 
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
-, num_samples=None, verbose=True):
+, num_samples=None, float_precision=2, verbose=True):
     assert len(datafiles)>0
     assert isinstance(currency_pair, str)
     assert isinstance(outfile, str)
@@ -52,6 +55,8 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
     assert isinstance(range_factor, float) or isinstance(range_factor, int) or not range_factor
     if range_factor:
         assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+    assert isinstance(float_precision, int)
+    assert float_precision>0
     assert isinstance(verbose, bool)
 
     if overwrite:
@@ -70,26 +75,32 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                 df = json.load(f_in)
 
             # extract all ask orders
-            price  = [float(x[0]) for x in df['orderbook_' + currency_pair]['asks']]
+            price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['asks']]
             lowest_ask = price[0]
             amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
-            volume = [float(x[0]) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+            volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
             asks = pd.DataFrame({'Amount': pd.Series(amount),
                                  'Price': price,
-                                 'Type':'ask',
-                                 'Volume':volume,
-                                 'VolumeAcc': 0})
+                                 'Volume':volume})
+            # group by rounded Price
+            asks = asks.groupby('Price').sum()
+            asks['Type'] = 'ask'
+            asks['VolumeAcc'] = 0
+            asks.reset_index(inplace=True)
 
             # extract all bid orders
-            price  = [float(x[0]) for x in df['orderbook_' + currency_pair]['bids']]
+            price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['bids']]
             highest_bid = price[0]
             amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
-            volume = [float(x[0]) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+            volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
             bids = pd.DataFrame({'Amount': pd.Series(amount),
                                  'Price': price,
-                                 'Type':'bid',
-                                 'Volume':volume,
-                                 'VolumeAcc': 0})
+                                 'Volume':volume})
+            # group by rounded Price
+            bids = bids.groupby('Price').sum()
+            bids['Type'] = 'bid'
+            bids['VolumeAcc'] = 0
+            bids.reset_index(inplace=True)
 
             # compute log_mean (center between lowest_ask and highest_bid)
             center_log = log_mean(lowest_ask, highest_bid)
@@ -117,7 +128,6 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
 
             if num_samples:
                 # discretize orderbook
-                print(num_samples, range_factor)
                 df2 = discretize_orderbook(data=df2, range_factor=range_factor, num_samples=num_samples)
             if range_factor:
                 # limited price range relative to center_log or norm_Price
@@ -180,9 +190,12 @@ def plot_orderbook(data, title, normalized=False, range_factor=None, outfile=Non
         y_factor = asks_lim + bids_lim
         
         asks_x = data[data.Type == 'ask'].norm_Price.values
-        asks_y = data[data.Type == 'ask'].VolumeAcc / y_factor
+        asks_y = data[data.Type == 'ask'].copy().VolumeAcc / y_factor
+        # added .copy(), was it's absence the reason for a warning?
+        # A value is trying to be set on a copy of a slice from a DataFrame
+        
         bids_x = data[data.Type == 'bid'].norm_Price.values
-        bids_y = data[data.Type == 'bid'].VolumeAcc / y_factor
+        bids_y = data[data.Type == 'bid'].copy().VolumeAcc / y_factor    # added .copy()
         
         plt.ylim((0,1))
         
@@ -210,7 +223,7 @@ def plot_orderbook(data, title, normalized=False, range_factor=None, outfile=Non
     plt.fill_between(asks_x, asks_y, 0, color='r', alpha=0.1)
     
     plt.xlim(xlim)
-    plt.suptitle("{} - {}".format(title, data[data.Type=='center'].Price.values[0]))
+    plt.suptitle("{} - center: {:1.4f}".format(title, data[data.Type=='center'].Price.values[0]))
     plt.legend()
     
     if outfile:
