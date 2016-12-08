@@ -41,43 +41,67 @@ def log_mean(x, y):
         return x
     return (x - y) / (math.log(x) - math.log(y))
 
-def market_order(orderbook, amount):
+def place_order(orderbook, amount, limit=None):
     assert isinstance(orderbook, pd.DataFrame)
     assert isinstance(amount, float) or isinstance(amount, int)
     assert amount != 0
+    assert isinstance(limit, float) or isinstance(limit, int) or not limit
+    if limit:
+        assert limit > 0
     
-    cash = 0
+    info = {}
+    
+    info['cashflow'] = 0
+    info['amount_fulfilled'] = 0
+    info['limit'] = limit
     if amount > 0:
         # buy from market
-        df = orderbook[orderbook.Type=='ask']     
+        df = orderbook[orderbook.Type=='ask']  
+        ask = df.iloc[0].Price
         for pos in range(len(df)):
             order = df.iloc[pos]
+            if limit and order.Price > limit:
+                break
             if amount - order.Amount >= 0:
                 purchase_amount = order.Amount
             else:
                 purchase_amount = amount
-            
-            cash -= purchase_amount * order.Price
+                
+            info['cashflow'] -= purchase_amount * order.Price
+            info['amount_fulfilled'] += purchase_amount
             amount -= purchase_amount
+            info['worst_price'] = order.Price
             if amount == 0:
                 break
+
+        info['slippage'] = (ask * info['amount_fulfilled']) + info['cashflow']
     elif amount < 0:
         # sell to market
-        df = orderbook[orderbook.Type=='bid']        
-        for pos in range(len(df)):
-            order = df.iloc[-pos-1]
+        df = orderbook[orderbook.Type=='bid']     
+        bid = df.iloc[-1].Price
+        
+        for pos in range(len(df)-1, 0, -1):
+            order = df.iloc[pos]
+            if limit and order.Price < limit:
+                break
             if amount + order.Amount <= 0:
                 sell_amount = - order.Amount
             else:
                 sell_amount = amount
-            cash -= sell_amount * order.Price
+            info['cashflow'] -= sell_amount * order.Price
+            info['amount_fulfilled'] += sell_amount
+            
             amount -= sell_amount
+            info['worst_price'] = order.Price
             if amount == 0:
                 break
+        info['slippage'] = abs((bid * info['amount_fulfilled']) + info['cashflow'])
+
+    info['amount_unfulfilled'] = amount
     if abs(amount) > 0:
-        print("error: empty orderbook! Could not trade all shares. {} left".format(amount))
-            
-    return cash
+        print("Could not trade all shares. {} left".format(amount))
+    
+    return info
 
 
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
