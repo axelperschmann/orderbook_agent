@@ -98,7 +98,7 @@ def place_order(orderbook, amount, limit=None, verbose=True):
         info['slippage'] = abs((bid * info['amount_fulfilled']) + info['cashflow'])
 
     info['amount_unfulfilled'] = amount
-    if if verbose
+    if verbose:
         if abs(amount) > 0:
             print("Could not trade all shares. {} left".format(amount))
     
