@@ -41,6 +41,45 @@ def log_mean(x, y):
         return x
     return (x - y) / (math.log(x) - math.log(y))
 
+def market_order(orderbook, amount):
+    assert isinstance(orderbook, pd.DataFrame)
+    assert isinstance(amount, float) or isinstance(amount, int)
+    assert amount != 0
+    
+    cash = 0
+    if amount > 0:
+        # buy from market
+        df = orderbook[orderbook.Type=='ask']     
+        for pos in range(len(df)):
+            order = df.iloc[pos]
+            if amount - order.Amount >= 0:
+                purchase_amount = order.Amount
+            else:
+                purchase_amount = amount
+            
+            cash -= purchase_amount * order.Price
+            amount -= purchase_amount
+            if amount == 0:
+                break
+    elif amount < 0:
+        # sell to market
+        df = orderbook[orderbook.Type=='bid']        
+        for pos in range(len(df)):
+            order = df.iloc[-pos-1]
+            if amount + order.Amount <= 0:
+                sell_amount = - order.Amount
+            else:
+                sell_amount = amount
+            cash -= sell_amount * order.Price
+            amount -= sell_amount
+            if amount == 0:
+                break
+    if abs(amount) > 0:
+        print("error: empty orderbook! Could not trade all shares. {} left".format(amount))
+            
+    return cash
+
+
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
 , num_samples=None, float_precision=2, verbose=True):
     assert len(datafiles)>0
