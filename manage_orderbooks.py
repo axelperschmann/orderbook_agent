@@ -41,53 +41,97 @@ def log_mean(x, y):
         return x
     return (x - y) / (math.log(x) - math.log(y))
 
-def place_order(orderbook, amount, limit=None, verbose=True):
+def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True):
     assert isinstance(orderbook, pd.DataFrame)
     assert isinstance(amount, float) or isinstance(amount, int)
     assert amount != 0
     assert isinstance(limit, float) or isinstance(limit, int) or not limit
     if limit:
         assert limit > 0
+    assert isinstance(verbose, bool)
     
+    df = orderbook.copy()
+    
+    if not trade_history:
+        trade_history = {}
+    trade_summary = {}
     info = {}
     
     info['cashflow'] = 0
     info['amount_fulfilled'] = 0
     info['limit'] = limit
+    
     if amount > 0:
         # buy from market
-        df = orderbook[orderbook.Type=='ask']  
+        order_type = 'ask'
+    elif amount < 0:
+        # sell to market
+        order_type = 'bid'
+    # reduce orderbook to relevant type of orders only
+    df = df[df.Type==order_type]
+    
+    # adjust dataFrame to our own trade_history. Simulate influence caused by our previous trades.
+    for hist in trade_history.keys():
+        pd_row = df[df.Price == float(hist)]
+        new_amount = (pd_row.Amount - trade_history[hist])
+
+        df.loc[pd_row.index, 'Amount']  = new_amount
+        df.loc[pd_row.index, 'Volume']  = new_amount * pd_row.Price  # unneccesary?!
+        # not modified, but not of interest for now: VolumeAcc and norm_Price
+    df = df[df.Amount > 0]
+    
+    if order_type == 'ask':
+        # buy from market
         ask = df.iloc[0].Price
         for pos in range(len(df)):
             order = df.iloc[pos]
             if limit and order.Price > limit:
+                # Price limit exceeded, stop trading now!
                 break
+                    
             if amount - order.Amount >= 0:
                 purchase_amount = order.Amount
             else:
                 purchase_amount = amount
+
+            # Fullfill trade
+            if str(order.Price) in trade_summary.keys():
+                trade_summary[str(order.Price)] += purchase_amount
+            else:
+                trade_summary[str(order.Price)] = purchase_amount
                 
+            if str(order.Price) in trade_history.keys():
+                trade_history[str(order.Price)] += purchase_amount
+            else:
+                trade_history[str(order.Price)] = purchase_amount
+            
             info['cashflow'] -= purchase_amount * order.Price
             info['amount_fulfilled'] += purchase_amount
             amount -= purchase_amount
             info['worst_price'] = order.Price
             if amount == 0:
                 break
-
         info['slippage'] = (ask * info['amount_fulfilled']) + info['cashflow']
-    elif amount < 0:
-        # sell to market
-        df = orderbook[orderbook.Type=='bid']     
-        bid = df.iloc[-1].Price
         
+    elif order_type == 'bid':
+        # sell to market
+        bid = df.iloc[-1].Price
         for pos in range(len(df)-1, 0, -1):
             order = df.iloc[pos]
             if limit and order.Price < limit:
+                # Price limit exceeded, stop trading now!
                 break
+
             if amount + order.Amount <= 0:
                 sell_amount = - order.Amount
             else:
                 sell_amount = amount
+                
+            # Fullfill trade
+            if str(order.Price) in trade_summary.keys():
+                trade_summary[str(order.Price)] += sell_amount
+            else:
+                trade_summary[str(order.Price)] = sell_amount
             info['cashflow'] -= sell_amount * order.Price
             info['amount_fulfilled'] += sell_amount
             
@@ -98,10 +142,19 @@ def place_order(orderbook, amount, limit=None, verbose=True):
         info['slippage'] = abs((bid * info['amount_fulfilled']) + info['cashflow'])
 
     info['amount_unfulfilled'] = amount
-    if verbose:
-        if abs(amount) > 0:
-            print("Could not trade all shares. {} left".format(amount))
+    info['trade_summary'] = trade_summary
+    info['trade_history'] = trade_history
     
+    if verbose:
+        if order_type == 'ask':
+            print("Bought {:.4f}/{:.4f} shares for {}".format(info['amount_fulfilled'],
+                                                          info['amount_fulfilled']+info['amount_unfulfilled'],
+                                                          info['cashflow']))
+        elif order_type == 'bid':
+            print("Sold {:.4f}/{:.4f} shares for {}".format(info['amount_fulfilled'],
+                                                          info['amount_fulfilled']+info['amount_unfulfilled'],
+                                                          info['cashflow']))
+            
     return info
 
 
