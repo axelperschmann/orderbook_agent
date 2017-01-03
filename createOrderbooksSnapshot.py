@@ -4,7 +4,7 @@ from datetime import datetime
 
 currency_pair = 'USDT_BTC'
 num_samples = None  # 101
-range_factor = 1.2
+range_factor = 1.15
 
 folder = '../data/'
 files = [os.path.join(dp, f) for dp, dn, fn in os.walk(os.path.expanduser(folder)) for f in fn]
@@ -15,7 +15,7 @@ filename = "../data/snapshots/orderbooks_{}_range{}_samples{}_snapshot{}.dict".f
     currency_pair, range_factor, num_samples, str(datetime.now().isoformat())[:-10])
 print(filename)
 
-
 extract_orderbooks_for_one_currencypair(datafiles, currency_pair='USDT_BTC',
                                         outfile=filename,
-                                        range_factor=range_factor, num_samples=num_samples, float_precision=2)
+                                        range_factor=range_factor, num_samples=num_samples,
+                                        float_precision=2, detailed=False)
