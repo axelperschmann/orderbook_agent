@@ -33,6 +33,28 @@ def discretize_orderbook(data, range_factor=1.3, num_samples=51):
     new_data.reset_index(inplace=True, drop=True)
     return new_data
 
+def orderbook_enrich(orderbook):
+    df = orderbook.copy()
+    
+    # normalization
+    df['norm_Price'] = df.Price / df[df.Type=='center'].Price.values[0]
+    
+    df['Volume'] = df.Price * df.Amount
+    df['VolumeAcc'] = 0
+    df['VolumeAcc'].loc[df.Type=='bid'] = (df[df.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
+    df['VolumeAcc'].loc[df.Type=='ask'] = (df[df.Type=='ask'].Volume).cumsum().values
+    
+    return df
+
+def orderbook_preview(orderbook, samples=5):
+    assert isinstance(orderbook, pd.DataFrame)
+    assert isinstance(samples, int)
+    assert samples > 0
+    df = pd.concat([orderbook[orderbook.Type == 'bid'].tail(samples),
+                   orderbook[orderbook.Type == 'center'],
+                   orderbook[orderbook.Type == 'ask'].head(samples)])
+    return df
+
 def log_mean(x, y):
     assert isinstance(x, int) or isinstance(x, float)
     assert isinstance(y, int) or isinstance(y, float)
@@ -51,13 +73,14 @@ def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True)
     assert isinstance(verbose, bool)
     
     df = orderbook.copy()
-    
+        
     if not trade_history:
         trade_history = {}
     trade_summary = {}
     info = {}
     
     info['cashflow'] = 0
+    info['worst_price'] = None
     info['amount_fulfilled'] = 0
     info['limit'] = limit
     
@@ -132,6 +155,12 @@ def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True)
                 trade_summary[str(order.Price)] += sell_amount
             else:
                 trade_summary[str(order.Price)] = sell_amount
+                
+            if str(order.Price) in trade_history.keys():
+                trade_history[str(order.Price)] += sell_amount
+            else:
+                trade_history[str(order.Price)] = sell_amount
+                
             info['cashflow'] -= sell_amount * order.Price
             info['amount_fulfilled'] += sell_amount
             
@@ -139,7 +168,10 @@ def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True)
             info['worst_price'] = order.Price
             if amount == 0:
                 break
-        info['slippage'] = abs((bid * info['amount_fulfilled']) + info['cashflow'])
+        info['slippage'] = (bid * info['amount_fulfilled']) + info['cashflow']
+        
+        print("   #####   ", info['slippage'], bid, info['amount_fulfilled'], bid*info['amount_fulfilled'], info['cashflow'])
+    print("bid", bid)
 
     info['amount_unfulfilled'] = amount
     info['trade_summary'] = trade_summary
@@ -154,12 +186,14 @@ def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True)
             print("Sold {:.4f}/{:.4f} shares for {}".format(info['amount_fulfilled'],
                                                           info['amount_fulfilled']+info['amount_unfulfilled'],
                                                           info['cashflow']))
-            
+    
+
+    assert len(info.keys()) == 8
     return info
 
 
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
-, num_samples=None, float_precision=2, verbose=True):
+, num_samples=None, float_precision=2, verbose=True, detailed=False):
     assert len(datafiles)>0
     assert isinstance(currency_pair, str)
     assert isinstance(outfile, str)
@@ -175,6 +209,7 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
     assert isinstance(float_precision, int)
     assert float_precision>0
     assert isinstance(verbose, bool)
+    assert isinstance(detailed, bool)
 
     if overwrite:
         filemode = "wb"
@@ -195,39 +230,52 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['asks']]
             lowest_ask = price[0]
             amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
-            volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
-            asks = pd.DataFrame({'Amount': pd.Series(amount),
-                                 'Price': price,
-                                 'Volume':volume})
+            if detailed:
+                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+                asks = pd.DataFrame({'Amount': pd.Series(amount),
+                                     'Price': price,
+                                     'Volume':volume})
+                asks['VolumeAcc'] = 0
+            else:
+                asks = pd.DataFrame({'Amount': pd.Series(amount),
+                                     'Price': price})
             # group by rounded Price
             asks = asks.groupby('Price').sum()
-            asks['Type'] = 'ask'
-            asks['VolumeAcc'] = 0
+            asks['Type'] = 'ask'               
             asks.reset_index(inplace=True)
 
             # extract all bid orders
             price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['bids']]
             highest_bid = price[0]
             amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
-            volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
-            bids = pd.DataFrame({'Amount': pd.Series(amount),
-                                 'Price': price,
-                                 'Volume':volume})
+            if detailed:
+                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+                bids = pd.DataFrame({'Amount': pd.Series(amount),
+                                     'Price': price,
+                                     'Volume':volume})
+                bids['VolumeAcc'] = 0
+            else:
+                bids = pd.DataFrame({'Amount': pd.Series(amount),
+                                     'Price': price})
             # group by rounded Price
             bids = bids.groupby('Price').sum()
             bids['Type'] = 'bid'
-            bids['VolumeAcc'] = 0
             bids.reset_index(inplace=True)
 
             # compute log_mean (center between lowest_ask and highest_bid)
             center_log = log_mean(lowest_ask, highest_bid)
             # spread = lowest_ask - highest_bid
 
-            center = pd.DataFrame({'Amount': 0,
-                                 'Price': center_log,
-                                 'Type':'center',
-                                 'Volume':0,
-                                 'VolumeAcc': 0}, index=[0])
+            if detailed:
+                center = pd.DataFrame({'Amount': 0,
+                                     'Price': center_log,
+                                     'Type':'center',
+                                     'Volume':0,
+                                     'VolumeAcc': 0}, index=[0])
+            else:
+                center = pd.DataFrame({'Amount': 0,
+                                     'Price': center_log,
+                                     'Type':'center'}, index=[0])
 
 
             # concat ask, center and bid DataFrames
@@ -236,9 +284,10 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             df2.index.rename(df['timestamp'], inplace=True)
             df2.reset_index(inplace=True, drop=True)
 
-            # compute accumulated order volume
-            df2['VolumeAcc'].loc[df2.Type=='bid'] = (df2[df2.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
-            df2['VolumeAcc'].loc[df2.Type=='ask'] = (df2[df2.Type=='ask'].Volume).cumsum().values
+            if detailed:
+                # compute accumulated order volume
+                df2['VolumeAcc'].loc[df2.Type=='bid'] = (df2[df2.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
+                df2['VolumeAcc'].loc[df2.Type=='ask'] = (df2[df2.Type=='ask'].Volume).cumsum().values
 
             # normalization
             df2['norm_Price'] = df2.Price / center_log
@@ -249,6 +298,9 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             if range_factor:
                 # limited price range relative to center_log or norm_Price
                 df2 = df2[(df2['norm_Price'] <= range_factor) & (df2['norm_Price'] >= range_factor**-1)]
+                
+            if not detailed:
+                df2.drop('norm_Price', axis=1, inplace=True)
             
             obj = {'dataframe': df2.to_json(double_precision=15), 'timestamp': df['timestamp']}
 
@@ -260,16 +312,24 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             print("Successfully appended {} lines to file '{}'".format(len(datafiles), outfile))
 
 
-def load_orderbook_snapshot(infile, verbose=True):
+def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
     assert isinstance(infile, str)
     assert isinstance(verbose, bool)
+    assert (isinstance(first_line, int) and first_line>=0) or not first_line
+    assert (isinstance(last_line, int) and last_line>1) or not last_line
     
     timestamps = []
     data = []
     with open(infile, "r+") as f:
         read_data = f.readlines()
 
-    for line in tqdm(range(len(read_data))):
+    line_range = range(len(read_data)) 
+    if last_line:
+        line_range = line_range[:last_line]
+    if first_line:
+        line_range = line_range[first_line:]
+       
+    for line in tqdm(line_range):
         dictionary = json.loads(read_data[line])
         df = pd.read_json(dictionary['dataframe'] , precise_float=True)
         df.sort_index(inplace=True)
@@ -293,8 +353,10 @@ def plot_orderbook(data, title, normalized=False, range_factor=None, outfile=Non
         if outfile[-(len(fileformat)+1):] != '.{}'.format(fileformat):
             outfile = "{}.{}".format(outfile, fileformat)
     assert isinstance(fileformat, str)
-    
-    
+    data = data.copy()
+    if not 'Volume' in data.columns:
+         data = orderbook_enrich(data)
+        
     plt.figure(figsize=(16,8))
     if normalized:
         if range_factor:
@@ -340,7 +402,13 @@ def plot_orderbook(data, title, normalized=False, range_factor=None, outfile=Non
     plt.fill_between(asks_x, asks_y, 0, color='r', alpha=0.1)
     
     plt.xlim(xlim)
-    plt.suptitle("{} - center: {:1.4f}".format(title, data[data.Type=='center'].Price.values[0]))
+    center = data[data.Type=='center'].Price.values[0]
+    ask = data[data.Type == 'ask'].iloc[0].Price
+    bid = data[data.Type == 'bid'].iloc[-1].Price
+    spread = ask-bid
+    spread_normed = data[data.Type == 'ask'].iloc[0].norm_Price - data[data.Type == 'bid'].iloc[-1].norm_Price
+    
+    plt.suptitle("{} - center: {:1.4f}, bid: {}, ask: {}, spread: {}, spread_norm {:0.4f}".format(title, center, bid, ask, spread, spread_normed))
     plt.legend()
     
     if outfile:
