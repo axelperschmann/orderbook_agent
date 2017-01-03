@@ -92,8 +92,9 @@ class OrderbookTradingSimulator:
         df.loc[df[df['Type'] == 'center'].index, 'Price'] = self.center_log
         
         # compute accumulated order volume
-        df['VolumeAcc'].loc[df.Type=='bid'] = (df[df.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
-        df['VolumeAcc'].loc[df.Type=='ask'] = (df[df.Type=='ask'].Volume).cumsum().values
+        # df['VolumeAcc'].loc[df.Type=='bid'] = (df[df.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
+        df.loc[df.Type=='bid', 'VolumeAcc'] = (df[df.Type=='bid'].Volume)[::-1].cumsum().values[::-1]
+        df.loc[df.Type=='ask', 'VolumeAcc'] = (df[df.Type=='ask'].Volume).cumsum().values
 
         # normalization
         df['norm_Price'] = df.Price / self.center_log
@@ -242,7 +243,7 @@ class OrderbookTradingSimulator:
         if verbose:
             self.summarize(df)
             
-            print("Traded {:.4f}/{:.4f} shares for {}".format(self.volume_traded, self.volume_traded+ self.volume_nottraded,
+            print("Traded {:.4f}/{:.4f} shares for {}".format(self.volume_traded, self.volume_traded + self.volume_nottraded,
                                                                   self.cashflow))
             
         # self.summarize(df)
