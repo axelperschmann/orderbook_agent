@@ -56,8 +56,8 @@ def orderbook_preview(orderbook, samples=5):
     return df
 
 def log_mean(x, y):
-    assert isinstance(x, int) or isinstance(x, float)
-    assert isinstance(y, int) or isinstance(y, float)
+    assert isinstance(x, int) or isinstance(x, float), 'Bad value: {}'.format(x)
+    assert isinstance(y, int) or isinstance(y, float), 'Bad value: {}'.format(y)
     
     if x == y:
         return x
