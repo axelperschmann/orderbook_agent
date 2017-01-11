@@ -254,6 +254,7 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             if df.keys()[0] == 'error':
                 # Ignore empty, erroneous orderbooks.
                 # First time this message occured: 'orderbook_USDT_BTC', u'2017-01-10T12:34:02.126242'
+                print("Skipped {} at t={} do to contained 'error' message.".format('orderbook_' + currency_pair, timestamp))
                 continue
 
             # extract all ask orders
@@ -351,7 +352,6 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             if not detailed:
                 df2.drop('norm_Price', axis=1, inplace=True)
             
-            print(timestamp)
             obj = {'dataframe': df2.to_json(double_precision=15), 'timestamp': timestamp}
 
             f_out.write(json.dumps(obj) + "\n")
