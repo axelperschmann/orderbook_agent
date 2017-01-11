@@ -6,6 +6,10 @@ import json
 import math
 import matplotlib.pyplot as plt
 from IPython.display import display
+import time
+from datetime import datetime
+
+from query_poloniex import *
 
 def get_ask(df):
     assert isinstance(df, pd.DataFrame)
@@ -19,15 +23,45 @@ def get_bid(df):
     
     return df[df.Type == 'bid'].iloc[-1].Price
 
-def orderbook_statistics(df):
+def orderbook_statistics(df, currency_pair, timestamp):
     assert isinstance(df, pd.DataFrame)
+    assert isinstance(currency_pair, str) or isinstance(currency_pair, unicode)
+    assert isinstance(timestamp, str) or isinstance(timestamp, unicode)
+    if len(timestamp) == 26:
+        # cut off milliseconds 
+        timestamp = timestamp[:-7]
+
     df = orderbook_enrich(df)
+    
+    asks = df[df.Type == 'ask']
+    bids = df[df.Type == 'bid']
+    
+    ask = get_ask(df)
+    bid = get_bid(df)
     statistics = {}
+    
+    statistics['timestamp'] = timestamp  # pd.DataFrame([timestamp], columns=['timestamp'])
+    
+    # volume disbalance: MarketDynamics vs. Statistics: Limit Order Book Example (Malyshkin, Bakhramov 2016)
+    # statistics['timestamp'] = timestamp
+    statistics['volumeDisbalance'] = (bid - ask) / (bid + ask)  
+    
     statistics['spread'] = get_ask(df) - get_bid(df)
 
-    statistics['total_asks'] = df[df.Type == 'ask'].iloc[-1].VolumeAcc
-    statistics['total_bids'] = df[df.Type == 'bid'].iloc[0].VolumeAcc
+    statistics['total_asks'] = asks.iloc[-1].VolumeAcc
+    statistics['total_bids'] = bids.iloc[0].VolumeAcc
+    statistics['total_AB_ratio'] = statistics['total_asks'] / statistics['total_bids']
+    statistics['diff_totalAB'] = statistics['total_asks'] - statistics['total_bids']
     
+    statistics['amount_asks'] = asks.Amount.sum()
+    statistics['amount_bids'] = bids.Amount.sum()
+    statistics['amount_ratio'] = statistics['amount_asks'] / statistics['amount_bids']
+    
+    hist = query_historic_trade_activity('USDT_BTC', querytime=timestamp, timeformat='%Y-%m-%dT%H:%M:%S')
+    
+    for r in hist.index:
+        for c in hist.columns:
+            statistics["{}_{}".format(c,r)] = hist.loc[r,c]
     return statistics
 
 def discretize_orderbook(data, range_factor=1.3, num_samples=51):
@@ -249,7 +283,10 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
         for fullpath in tqdm(datafiles):
             with gzip.open(fullpath, 'r') as f_in:
                 df = json.load(f_in)
-                timestamp = df['timestamp']
+                if df['orderbook_' + currency_pair].keys()[0] == 'error':
+                    continue
+                
+                timestamp = df['timestamp']                
                 df = df['orderbook_' + currency_pair]
             if df.keys()[0] == 'error':
                 # Ignore empty, erroneous orderbooks.
