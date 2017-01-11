@@ -5,6 +5,30 @@ import gzip
 import json
 import math
 import matplotlib.pyplot as plt
+from IPython.display import display
+
+def get_ask(df):
+    assert isinstance(df, pd.DataFrame)
+    assert len(df[df.Type == 'ask']) > 0
+    
+    return df[df.Type == 'ask'].iloc[0].Price
+
+def get_bid(df):
+    assert isinstance(df, pd.DataFrame)
+    assert len(df[df.Type == 'bid']) > 0
+    
+    return df[df.Type == 'bid'].iloc[-1].Price
+
+def orderbook_statistics(df):
+    assert isinstance(df, pd.DataFrame)
+    df = orderbook_enrich(df)
+    statistics = {}
+    statistics['spread'] = get_ask(df) - get_bid(df)
+
+    statistics['total_asks'] = df[df.Type == 'ask'].iloc[-1].VolumeAcc
+    statistics['total_bids'] = df[df.Type == 'bid'].iloc[0].VolumeAcc
+    
+    return statistics
 
 def discretize_orderbook(data, range_factor=1.3, num_samples=51):
     assert isinstance(data, pd.DataFrame)
@@ -225,13 +249,19 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
         for fullpath in tqdm(datafiles):
             with gzip.open(fullpath, 'r') as f_in:
                 df = json.load(f_in)
+                timestamp = df['timestamp']
+                df = df['orderbook_' + currency_pair]
+            if df.keys()[0] == 'error':
+                # Ignore empty, erroneous orderbooks.
+                # First time this message occured: 'orderbook_USDT_BTC', u'2017-01-10T12:34:02.126242'
+                continue
 
             # extract all ask orders
-            price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['asks']]
+            price  = [round(float(x[0]), float_precision) for x in df['asks']]
             lowest_ask = price[0]
-            amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+            amount = [float(x[1]) for x in df['asks']]
             if detailed:
-                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['asks']]
+                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['asks']]
                 asks = pd.DataFrame({'Amount': pd.Series(amount),
                                      'Price': price,
                                      'Volume':volume})
@@ -245,11 +275,11 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             asks.reset_index(inplace=True)
 
             # extract all bid orders
-            price  = [round(float(x[0]), float_precision) for x in df['orderbook_' + currency_pair]['bids']]
+            price  = [round(float(x[0]), float_precision) for x in df['bids']]
             highest_bid = price[0]
-            amount = [float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+            amount = [float(x[1]) for x in df['bids']]
             if detailed:
-                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['orderbook_' + currency_pair]['bids']]
+                volume = [round(float(x[0]), float_precision) * float(x[1]) for x in df['bids']]
                 bids = pd.DataFrame({'Amount': pd.Series(amount),
                                      'Price': price,
                                      'Volume':volume})
@@ -261,6 +291,25 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             bids = bids.groupby('Price').sum()
             bids['Type'] = 'bid'
             bids.reset_index(inplace=True)
+            
+            if lowest_ask == highest_bid:
+                # Do to rounding issues (parameter float_precision) it can happen that ask and bid are equal (zero spread).
+                # The following code takes care of this problem by the corresponding 'matching orders'
+                asks_vol = asks.Amount.values[0]
+                bids_vol = bids.Amount.values[-1]
+                if asks_vol > bids_vol:
+                    asks.loc[0, 'Amount'] -= bids_vol
+                    bids.loc[len(bids)-1, 'Amount'] = 0
+                    bids = bids[bids.Amount > 0]
+                    highest_bid = bids.Price.values[-1]
+                else:
+                    bids.loc[len(bids)-1, 'Amount'] -= asks_vol
+                    asks.loc[0, 'Amount'] = 0
+                    asks = asks[asks.Amount > 0]
+                    lowest_ask = asks.Price.values[0]
+                
+                display(bids.tail())
+                display(asks.head())
 
             # compute log_mean (center between lowest_ask and highest_bid)
             center_log = log_mean(lowest_ask, highest_bid)
@@ -281,7 +330,7 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             # concat ask, center and bid DataFrames
             df2 = pd.concat([asks, bids, center])
             df2 = df2.sort_values("Price")
-            df2.index.rename(df['timestamp'], inplace=True)
+            df2.index.rename(timestamp, inplace=True)
             df2.reset_index(inplace=True, drop=True)
 
             if detailed:
@@ -302,7 +351,8 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             if not detailed:
                 df2.drop('norm_Price', axis=1, inplace=True)
             
-            obj = {'dataframe': df2.to_json(double_precision=15), 'timestamp': df['timestamp']}
+            print(timestamp)
+            obj = {'dataframe': df2.to_json(double_precision=15), 'timestamp': timestamp}
 
             f_out.write(json.dumps(obj) + "\n")
     if verbose:
