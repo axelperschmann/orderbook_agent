@@ -49,6 +49,7 @@ class OrderbookTradingSimulator:
         assert isinstance(verbose, bool)
         
         df = df.copy()
+        
         if not 'Volume' in df.columns and not 'VolumeAcc' in df.columns:
             # compact databook provided, contains only Price, Amount and Type
             if verbose:
@@ -164,9 +165,6 @@ class OrderbookTradingSimulator:
         assert isinstance(verbose, bool)
         assert isinstance(timespan, int) and timespan > 0
         assert isinstance(must_trade, bool)
-        
-        volume_traded = 0
-        self.volume_of_last_trade_period = 0
 
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
@@ -181,20 +179,21 @@ class OrderbookTradingSimulator:
                                   'high': 0,
                                   'low': np.inf,
                                   'avg': 0,
-                                  'slippage': 0},
+                                  'cost_avg': 0,
+                                  'cost':0},
                             index=[timestamps[0][:-10]])
         
-        for t in tqdm(range(timespan), leave=True):
+        for t in tqdm(range(timespan), leave=False):
             assert isinstance(orderbooks[t], pd.DataFrame)
             df = orderbooks[t].copy()
             df = self.adjust_orderbook(df)
-            
+
             if t == 0:
+                # record basic informations from beginning of trading period
                 info.ASK = df[df.Type == 'ask'].iloc[0].Price
                 info.BID = df[df.Type == 'bid'].iloc[-1].Price
                 info.SPREAD = (info.ASK - info.BID)
-                info.CENTER = log_mean(info.ASK.values[0], info.BID.values[0])           
-
+                info.CENTER = log_mean(info.ASK.values[0], info.BID.values[0])
                
             if volume==0:
                 # Do nothing!
@@ -202,7 +201,7 @@ class OrderbookTradingSimulator:
                 
             if must_trade and t == timespan-1:
                 # must sell all remaining shares. Place Market Order!
-                print("Run out of time (t={}).\nSell remaining {:.4f}/{:.4f} shares for current market order price".format(t,
+                print("Run out of time (t={}).\nTrade remaining {:.4f}/{:.4f} shares for current market order price".format(t,
                                                                                                   info.volume_left.values[0],
                                                                                                   info.VOLUME.values[0]))
                 limit = None
@@ -228,17 +227,18 @@ class OrderbookTradingSimulator:
                 print("No shares left at t={}, Done!".format(t))
                 break
                 
-        info.avg = abs(info.cashflow / info.volume_traded)
-        
-        if volume > 0:
-            # buy from market
-            info.slippage = info.cashflow + info.volume_traded * info.ASK
-        elif volume < 0:
-            # sell to market
-            info.slippage = info.cashflow + info.volume_traded * info.BID
+        info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
         
         self.history = self.history.append(info, ignore_index=False)
-        display(self.history)
+        
+        # compute costs
+        self.history.cost_avg.iloc[-1] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] -
+                                                                                  self.history.CENTER.values[0])
+        if info.volume_traded.values[0] != 0:
+            self.history.cost.iloc[-1] = - 1. * (self.history.cashflow[-1] +
+                                                self.history.volume_traded.values[-1] * self.history.CENTER.values[0])
+        
+        # display(self.history)
 
         if verbose:
             self.summarize(df)
@@ -248,7 +248,6 @@ class OrderbookTradingSimulator:
                                                               info.cashflow.values[0],
                                                               info.volume_left.values[0]))
             
-        # self.summarize(df)
         return self.adjust_orderbook(df)
         
     
