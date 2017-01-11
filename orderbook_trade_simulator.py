@@ -156,16 +156,16 @@ class OrderbookTradingSimulator:
         
         return info
         
-    def trade_timespan(self, orderbooks, timestamps, volume, limit, verbose=True, timespan=1, must_trade=False):
+    def trade_timespan(self, orderbooks, timestamp, volume, limit, verbose=True, timespan=1, must_trade=False):
         assert isinstance(orderbooks, list)
         assert len(orderbooks)==timespan
+        assert isinstance(timestamp, str) or isinstance(timestamp, unicode)
         assert isinstance(volume, float) or isinstance(volume, int)
         assert isinstance(limit, float) or isinstance(limit, int)
         assert limit > 0
         assert isinstance(verbose, bool)
         assert isinstance(timespan, int) and timespan > 0
         assert isinstance(must_trade, bool)
-
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
                                   'SPREAD': None,
@@ -181,9 +181,9 @@ class OrderbookTradingSimulator:
                                   'avg': 0,
                                   'cost_avg': 0,
                                   'cost':0},
-                            index=[timestamps[0][:-10]])
+                            index=[timestamp[:-10]])
         
-        for t in tqdm(range(timespan), leave=False):
+        for t in range(timespan):
             assert isinstance(orderbooks[t], pd.DataFrame)
             df = orderbooks[t].copy()
             df = self.adjust_orderbook(df)
