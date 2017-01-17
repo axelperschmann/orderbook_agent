@@ -35,7 +35,6 @@ class OrderbookTradingSimulator:
     
     def __init__(self, T=5):
         self.t = 0
-        self.T = T
         
         self.purchase_history = {}  # {'705.45': 3.1721811199999999}
         self.sell_history = {}  # {'703.70': 0.001}
@@ -90,7 +89,7 @@ class OrderbookTradingSimulator:
 
         return df
     
-    def __perform_trade(self, df, volume, limit=None):
+    def __perform_trade(self, df, volume, limit=None, simulate=False):
         assert isinstance(df, pd.DataFrame)
         assert isinstance(volume, float) or isinstance(volume, int)
         assert volume != 0
@@ -99,7 +98,8 @@ class OrderbookTradingSimulator:
         info = {'cashflow': 0,
                 'volume':   0}
         
-        self.t += 1
+        if not simulate:
+            self.t += 1
         trade_summary = {}
         
         if volume > 0:
@@ -135,10 +135,11 @@ class OrderbookTradingSimulator:
             else:
                 trade_summary[price] = current_order_volume
 
-            if price in history.keys():
-                history[price] += current_order_volume
-            else:
-                history[price] = current_order_volume
+            if not simulate:
+                if price in history.keys():
+                    history[price] += current_order_volume
+                else:
+                    history[price] = current_order_volume
 
             info['cashflow'] += current_order_volume * order.Price * order_direction
             info['volume'] -= current_order_volume * order_direction
@@ -147,22 +148,33 @@ class OrderbookTradingSimulator:
 
             if volume == 0:
                 break
-        self.volume_nottraded = volume
-        
-        self.last_trade = trade_summary
+        if not simulate:
+            self.volume_nottraded = volume
+            self.last_trade = trade_summary
         
         # Round trading volume to prevent subsequent rounding issues like volume_left = -1.421085e-14 (vs. intended 0.0)
         info['volume'] = round(info['volume'], PRECISION)
         
         return info
+    
+    def check_market_value(self, orderbook, volume):
+        assert isinstance(orderbook, pd.DataFrame)
+        assert (isinstance(volume, float) or isinstance(volume, int)) and volume != 0
         
-    def trade_timespan(self, orderbooks, timestamp, volume, limit, verbose=True, timespan=1, must_trade=False):
+        df = orderbook.copy()
+        df = self.adjust_orderbook(df)
+        
+        # perform trade
+        trade_result = self.__perform_trade(df, volume, limit=None, simulate=True)
+        
+        return trade_result['cashflow']
+        
+    def trade_timespan(self, orderbooks, timestamp, volume, limit, verbose=False, timespan=1, must_trade=False):
         assert isinstance(orderbooks, list)
         assert len(orderbooks)==timespan
         assert isinstance(timestamp, str) or isinstance(timestamp, unicode)
         assert isinstance(volume, float) or isinstance(volume, int)
-        assert isinstance(limit, float) or isinstance(limit, int)
-        assert limit > 0
+        assert ((isinstance(limit, float) or isinstance(limit, int)) and limit > 0) or not limit
         assert isinstance(verbose, bool)
         assert isinstance(timespan, int) and timespan > 0
         assert isinstance(must_trade, bool)
@@ -224,7 +236,7 @@ class OrderbookTradingSimulator:
             
             
             if abs(info.volume_left.values[0]) == 0:
-                print("No shares left at t={}, Done!".format(t))
+                print("No shares left at t={} (self.t={}), Done!".format(t, self.t))
                 break
                 
         info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
