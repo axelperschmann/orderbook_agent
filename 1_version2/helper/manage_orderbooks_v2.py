@@ -9,31 +9,7 @@ import time
 from datetime import datetime
 from IPython.display import display
 
-def get_ask(orderbook):
-    assert isinstance(orderbook, dict)
-    assert 'asks' in orderbook.keys() and isinstance(orderbook['asks'], pd.DataFrame) and len(orderbook['asks']) > 0
-    return orderbook['asks'].index.values[0]
-
-def get_bid(orderbook):
-    assert isinstance(orderbook, dict)
-    assert 'bids' in orderbook.keys() and isinstance(orderbook['bids'], pd.DataFrame) and len(orderbook['bids']) > 0
-    return orderbook['bids'].index.values[0]
-
-def get_center(orderbook):
-    assert isinstance(orderbook, dict)
-    assert 'asks' in orderbook.keys() and isinstance(orderbook['asks'], pd.DataFrame) and len(orderbook['asks']) > 0
-    assert 'bids' in orderbook.keys() and isinstance(orderbook['bids'], pd.DataFrame) and len(orderbook['bids']) > 0
-    
-    return log_mean(orderbook['asks'].index.values[0], orderbook['bids'].index.values[0])
-
-def log_mean(x, y):
-    assert isinstance(x, int) or isinstance(x, float), 'Bad value: {}'.format(x)
-    assert isinstance(y, int) or isinstance(y, float), 'Bad value: {}'.format(y)
-    
-    if x == y:
-        return x
-    return (x - y) / (math.log(x) - math.log(y))
-
+from orderbook_container import OrderbookContainer
 
 
 def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
@@ -66,14 +42,8 @@ def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=Non
         asks.index = asks.index.astype(float)
         asks['Amount'] = asks.Amount.values.astype(float)
         
-        orderbook = {
-            'timestamp': dictionary['timestamp'],
-            'bids': bids,
-            'asks': asks
-        }
-        
-        bids = orderbook['bids']  #.sort_index()
-        data.append(orderbook)
+        container = OrderbookContainer(dictionary['timestamp'], bids=bids, asks=asks)
+        data.append(container)
 
     if verbose:
         print("Loaded {} orderbooks from file '{}'.".format(len(data), infile))
@@ -158,7 +128,6 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             # executing DataFrame.to_dict() :
             # e.g. index: 706.17 -> 706.16999999999996
             # e.g. Amount: 0.5283784 -> 0.052837839999999997
-            
             asks.index = asks.index.map(unicode)
             asks['Amount'] = asks.Amount.map(unicode)
             bids.index = bids.index.map(unicode)
@@ -175,3 +144,12 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             print("Successfully created file '{}'".format(outfile))
         else:
             print("Successfully appended {} lines to file '{}'".format(len(datafiles), outfile))
+            
+            
+def log_mean(x, y):
+    assert isinstance(x, int) or isinstance(x, float), 'Bad value: {}'.format(x)
+    assert isinstance(y, int) or isinstance(y, float), 'Bad value: {}'.format(y)
+    
+    if x == y:
+        return x
+    return (x - y) / (math.log(x) - math.log(y))
