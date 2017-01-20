@@ -11,6 +11,14 @@ from IPython.display import display
 
 from orderbook_container import OrderbookContainer
 
+def orderbooks_difference(orderbook1, orderbook2):
+    bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
+    asks_diff = self.asks.subtract(other.asks, axis=1, fill_value=0)
+
+    return OrderbookContainer(timestamp=other.timestamp,
+                              bids = bids_diff[bids_diff != 0].dropna(),
+                              asks = asks_diff[asks_diff != 0].dropna())
+
 
 def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
     assert isinstance(infile, str)

@@ -4,49 +4,104 @@ import math
 import matplotlib.pyplot as plt
 from IPython.display import display
 
-class OrderbookContainer:
-    def __init__(self, timestamp, bids, asks):
-        assert isinstance(timestamp, unicode) or isinstance(timestamp, str)
-        assert isinstance(bids, pd.DataFrame) and len(bids)>0
-        assert isinstance(asks, pd.DataFrame) and len(asks)>0
-        
+class OrderbookContainer(object):
+    def __init__(self, timestamp, bids, asks, enriched=False, kind='orderbook'):
+        assert isinstance(timestamp, (unicode, str))
+        assert isinstance(bids, pd.DataFrame)  # and len(bids)>0
+        assert isinstance(asks, pd.DataFrame)  # and len(asks)>0
+        assert isinstance(enriched, bool)
+        assert isinstance(kind, (unicode, str))
         self.timestamp = timestamp
         self.bids = bids
         self.asks = asks  
-        self.enriched = False
+        self.kind = kind
+        self.enriched = enriched
 
+    
+    def copy(self):
+        return OrderbookContainer(self.timestamp, self.bids, self.asks, self.enriched)
+    
+    def subtract(self, other):
+        bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
+        asks_diff = self.asks.subtract(other.asks, axis=1, fill_value=0)
+
+        return OrderbookContainer(timestamp=other.timestamp,
+                                  bids=bids_diff[bids_diff != 0].dropna(),
+                                  asks=asks_diff[asks_diff != 0].dropna(),
+                                  kind='diff')
+        
     def __str__(self):
-        return "Orderbook snapshot: {}".format(self.timestamp)
+        
+        return "OrderbookContainer from {}\n  {} bids (best: {})\n  {} asks (best: {})\n  kind: '{}'".format(self.timestamp, len(self.bids), self.get_bid(), len(self.asks), self.get_ask(), self.kind)
+    
+    def __repr__(self):
+          return self.__str__()
         
     def get_ask(self):
-        return self.asks.index.values[0]
+        if len(self.asks) > 0:
+            ask = self.asks.index.values[0]
+        else:
+            ask = np.nan
+        return ask
     
     def get_bid(self):
-        return self.bids.index.values[0]
+        if len(self.bids) > 0:
+            bid = self.bids.index.values[0]
+        else:
+            bid = np.nan
+        return bid
     
     def get_center(self):
         return log_mean(self.get_ask(), self.get_bid())
     
-    def to_DataFrame(self, depth=None, range_factor=None):
-        assert (isinstance(depth, int) and depth > 0) or depth is None, "depth={}, {}".format(depth, type(depth))
-        assert ((isinstance(range_factor, float) or isinstance(range_factor, int)) and range_factor > 1) or range_factor is None, "range_factor={}, {}".format(range_factor, type(range_factor))
+    
+    def tail(self, depth=3, range_factor=None):
+        assert (isinstance(depth, int) and depth > 0), "depth={}, {}".format(depth, type(depth))
+        assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None, "range_factor={}, {}".format(range_factor, type(range_factor))
+        return self.to_DataFrame(depth=-depth, range_factor=range_factor)
+    
+    def head(self, depth=3, range_factor=None):
+        assert (isinstance(depth, int) and depth > 0)
+        assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None, "range_factor={}, {}".format(range_factor, type(range_factor))
+        return self.to_DataFrame(depth=depth, range_factor=range_factor)
         
-        if depth:
-            bids = self.bids.head(depth).copy()
-            asks = self.asks.head(depth).copy()
-        else:
-            bids = self.bids.copy()
-            asks = self.asks.copy()
-            
+    def to_DataFrame(self, depth=None, range_factor=None):
+        assert (isinstance(depth, int) and depth != 0) or depth is None, "depth={}, {}".format(depth, type(depth))
+        assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None, "range_factor={}, {}".format(range_factor, type(range_factor))
+        bids = self.bids.copy()
+        asks = self.asks.copy()
+        
         if range_factor:
             bids = bids[bids.index > self.get_center()/range_factor]
             asks = asks[asks.index < self.get_center()*range_factor]
+        
+        if depth:
+            if depth > 0:
+                bids = bids.head(depth)
+                asks = asks.head(depth)
+            elif depth < 0:
+                bids = bids.tail(abs(depth))
+                asks = asks.tail(abs(depth))
             
+        return self.__to_DataFrame(bids, asks)
+    
+    
+    def __to_DataFrame(self, bids, asks):
+        assert isinstance(bids, pd.DataFrame)
+        assert isinstance(asks, pd.DataFrame)
+        
         bids['Type'] = 'bid'
-        center = pd.DataFrame([[np.nan, 'center']], columns=['Amount', 'Type'], index=[self.get_center()])
         asks['Type'] = 'ask'
         
-        return pd.concat([bids[::-1], center, asks])
+        if self.kind == 'orderbook':
+            center = pd.DataFrame([[np.nan, 'center']],
+                                  columns=['Amount', 'Type'], index=[self.get_center()])
+            df = pd.concat([bids[::-1], center, asks])
+        elif self.kind == 'diff':
+            df = pd.concat([bids[::-1], asks])
+        else:
+            raise("Error! Unknown orderbooktype: {}".format(self.kind))
+        return df
         
     def enrich(self):
         self.enriched = True
@@ -66,12 +121,14 @@ class OrderbookContainer:
         assert ((isinstance(range_factor, float) or isinstance(range_factor, int)) and range_factor > 1) or range_factor is None
         assert isinstance(outfile, str) or isinstance(outfile, unicode) or outfile is None
         
+        assert self.kind == 'orderbook',  "Can only plot OrderbookContainers of kind 'orderbook'. This OrderbookContainer is of type '{}'.".format(self.kind)
+        
         if not self.enriched:
             print("enrich")
             self.enrich()
             
         data = self.to_DataFrame(range_factor=range_factor)
-        
+
         plt.figure(figsize=(16,8))
         if normalized:
             if range_factor:
@@ -118,11 +175,12 @@ class OrderbookContainer:
         center = data[data.Type=='center'].index[0]
         plt.suptitle("{} - center: {:1.4f}, ".format(self.timestamp, center))
         plt.legend()
-
+        plt.ylabel("Accumulated Volume")
+        plt.xlabel("Price Level")
         if outfile:
-            if outfile[-4:] != '.svg':
-                outfile = "{}.svg".format(outfile)
-            plt.savefig(outfile, format='svg')
+            if outfile[-4:] != '.png':
+                outfile = "{}.png".format(outfile)
+            plt.savefig(outfile, format='png')
             print("Successfully saved'{}'".format(outfile))
             plt.close()
         else:
