@@ -22,15 +22,19 @@ class OrderbookTradingSimulator(object):
         self.history = pd.DataFrame([])
         
     def adjust_orderbook(self, orderbook):
-        print("  ##  adjust_orderbook  ##  ")
-        display(orderbook.head(5))
-        adjusted_orderbook = orderbook.copy()
+        ob = orderbook.copy()
+
+        # merge orderbook with own trade history
+        # adjust asks
+        ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
+        drop_idx = ob.asks[ob.asks<=0].dropna().index
+        ob.asks.drop(drop_idx, inplace=True)
+        # adjust bids
+        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)
+        drop_idx = ob.bids[ob.bids<=0].dropna().index
+        ob.bids.drop(drop_idx, inplace=True)
         
-        display(adjusted_orderbook.asks.subtract(self.buy_history).dropna())
-        
-        display(self.buy_history)
-        print("  ##  adjust_orderbook END ##  ")
-        return orderbook
+        return ob
         
     def check_current_value(self, orderbook, volume, limit=None):      
         assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
@@ -73,7 +77,7 @@ class OrderbookTradingSimulator(object):
         for t in range(timespan):
             assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
             ob = orderbooks[t].copy()
-            # ob = self.adjust_orderbook(ob)
+            ob = self.adjust_orderbook(ob)
 
             if t == 0:
                 # record basic informations from beginning of trading period
@@ -95,13 +99,12 @@ class OrderbookTradingSimulator(object):
                 
             # perform trade
             trade_result = self.__perform_trade(ob, info.volume_left.values[0], limit)
-           
+
             info.cashflow += trade_result['cashflow']
             info.volume_traded += trade_result['volume']
             info.volume_left = round((info.VOLUME - info.volume_traded).values[0], PRECISION)
             
             if len(self.last_trade) > 0:
-                display(self.last_trade)
                 current_high = self.last_trade.index.max()
                 if current_high > info.high.values[0]:
                     info.high = current_high
@@ -127,16 +130,13 @@ class OrderbookTradingSimulator(object):
             self.history.cost.iloc[-1] = - 1. * (self.history.cashflow[-1] +
                                                 self.history.volume_traded.values[-1] * self.history.CENTER.values[0])
         
-        display(self.history)
-
         if verbose:
-            self.summarize(ob)
+            # self.summarize(ob)
             
             print("Traded {:.4f}/{:.4f} shares for {}, {:.4f} shares left".format(info.volume_traded.values[0],
                                                               (info.volume_traded + info.volume_left).values[0],
                                                               info.cashflow.values[0],
                                                               info.volume_left.values[0]))
-            
         return self.adjust_orderbook(ob)
         
     def __perform_trade(self, orderbook, volume=None, limit=None, simulation=False):
