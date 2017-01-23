@@ -88,7 +88,6 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                     continue
                 
                 timestamp = df['timestamp'][:16] # cut off milliseconds
-                print(timestamp)
                 df = df['orderbook_' + currency_pair]
             if df.keys()[0] == 'error':
                 # Ignore empty, erroneous orderbooks.
