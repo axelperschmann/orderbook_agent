@@ -21,7 +21,7 @@ class OrderbookContainer(object):
     def copy(self):
         return OrderbookContainer(self.timestamp, self.bids, self.asks, self.enriched, self.kind)
     
-    def subtract(self, other):
+    def compare_with(self, other):
         bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
         asks_diff = self.asks.subtract(other.asks, axis=1, fill_value=0)
 
