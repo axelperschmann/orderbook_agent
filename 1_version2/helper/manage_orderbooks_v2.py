@@ -64,11 +64,10 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
     assert isinstance(currency_pair, str)
     assert isinstance(outfile, str)
     assert isinstance(overwrite, bool)
-    assert isinstance(range_factor, float) or isinstance(range_factor, int) or not range_factor
+    assert isinstance(range_factor, (float, int)) or not range_factor
     if range_factor:
         assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
-    assert isinstance(pricelevel_precision, int)
-    assert pricelevel_precision>=0
+    assert isinstance(pricelevel_precision, int) and pricelevel_precision>=0
     assert isinstance(verbose, bool)
     
     if overwrite:
@@ -89,6 +88,7 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                     continue
                 
                 timestamp = df['timestamp'][:16] # cut off milliseconds
+                print(timestamp)
                 df = df['orderbook_' + currency_pair]
             if df.keys()[0] == 'error':
                 # Ignore empty, erroneous orderbooks.
@@ -96,53 +96,51 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                 print("Skipped {} at t={} do to contained 'error' message.".format('orderbook_' + currency_pair, timestamp))
                 continue
                 
+            # extract all bid orders
+            bids = pd.DataFrame(df['bids'], columns=['Price', 'Amount'])
+            bids['Price'] = pd.to_numeric(bids['Price']).round(decimals=pricelevel_precision)
+            bids = bids.groupby('Price', as_index=False).sum()[::-1]
+            bids = bids.set_index(bids.Price.values).drop("Price", axis=1)
+            
             # extract all ask orders
             asks = pd.DataFrame(df['asks'], columns=['Price', 'Amount'])
             asks['Price'] = pd.to_numeric(asks['Price']).round(decimals=pricelevel_precision)
             asks = asks.groupby('Price', as_index=False).sum()
             asks = asks.set_index(asks.Price.values).drop("Price", axis=1)
             
-            # extract all bid orders
-            bids = pd.DataFrame(df['bids'], columns=['Price', 'Amount'])
-            bids = bids.append(pd.DataFrame([[705.45, 0.4]], columns=['Price', 'Amount']))
-            
-            bids['Price'] = pd.to_numeric(bids['Price']).round(decimals=pricelevel_precision)
-            bids = bids.groupby('Price', as_index=False).sum()[::-1]
-            bids = bids.set_index(bids.Price.values).drop("Price", axis=1)
-
-            if asks.index.values[0] == bids.index.values[0]:
+            if bids.index.values[0] == asks.index.values[0]:
                 # Due to rounding issues (parameter pricelevel_precision) it can happen that ask and bid
                 # are equal (=zero spread). We must take care of this problem by 'matching' (=fulfilling)
                 # corresponding orders.
-                asks_vol = asks.Amount.values[0]
                 bids_vol = bids.Amount.values[0]
-            
+                asks_vol = asks.Amount.values[0]
+                
                 if asks_vol > bids_vol:
                     asks.iloc[0] -= bids_vol
                     bids = bids.drop(bids.index[0])
                 else:
                     bids.iloc[0] -= asks_vol
                     asks = asks.drop(asks.index[0])
-
+            
             center = round(log_mean(asks.index.values[0], bids.index.values[0]),
                            pricelevel_precision+2)
 
             if range_factor:
                 # limited price range relative to center_log or norm_Price
-                asks = asks[asks.index <= center * range_factor].dropna()
                 bids = bids[bids.index >= center / range_factor].dropna()
-            
+                asks = asks[asks.index <= center * range_factor].dropna()
+                
             # must convert floats to unicode to prevent precision loss when
             # executing DataFrame.to_dict() :
             # e.g. index: 706.17 -> 706.16999999999996
             # e.g. Amount: 0.5283784 -> 0.052837839999999997
-            asks.index = asks.index.map(unicode)
-            asks['Amount'] = asks.Amount.map(unicode)
             bids.index = bids.index.map(unicode)
             bids['Amount'] = bids.Amount.map(unicode)            
+            asks.index = asks.index.map(unicode)
+            asks['Amount'] = asks.Amount.map(unicode)
 
-            obj = {'asks': asks.to_dict(),
-                   'bids': bids.to_dict(),
+            obj = {'bids': bids.to_dict(),
+                   'asks': asks.to_dict(),
                    'timestamp': timestamp}
 
             f_out.write(json.dumps(obj) + "\n")
@@ -155,8 +153,8 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             
             
 def log_mean(x, y):
-    assert isinstance(x, int) or isinstance(x, float), 'Bad value: {}'.format(x)
-    assert isinstance(y, int) or isinstance(y, float), 'Bad value: {}'.format(y)
+    assert isinstance(x, (int, float)), 'Bad value: {}'.format(x)
+    assert isinstance(y, (int, float)), 'Bad value: {}'.format(y)
     
     if x == y:
         return x
