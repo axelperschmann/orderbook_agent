@@ -116,20 +116,19 @@ class OrderbookContainer(object):
         self.asks['VolumeAcc'] = (self.asks.Volume).cumsum().values
 
     
-    def plot(self, normalized=False, range_factor=None, outfile=None):
+    def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(16,8)):
         assert isinstance(normalized, bool)
-        assert ((isinstance(range_factor, float) or isinstance(range_factor, int)) and range_factor > 1) or range_factor is None
-        assert isinstance(outfile, str) or isinstance(outfile, unicode) or outfile is None
+        assert (isinstance(range_factor, (float, int) and range_factor > 1) or range_factor is None
+        assert isinstance(outfile, (str, unicode)) or outfile is None
         
         assert self.kind == 'orderbook',  "Can only plot OrderbookContainers of kind 'orderbook'. This OrderbookContainer is of type '{}'.".format(self.kind)
         
         if not self.enriched:
-            print("enrich")
             self.enrich()
             
         data = self.to_DataFrame(range_factor=range_factor)
 
-        plt.figure(figsize=(16,8))
+        plt.figure(figsize=figsize)
         if normalized:
             if range_factor:
                 xlim = (1./range_factor, range_factor)
@@ -189,8 +188,8 @@ class OrderbookContainer(object):
 
 
 def log_mean(x, y):
-    assert isinstance(x, int) or isinstance(x, float), 'Bad value: {}'.format(x)
-    assert isinstance(y, int) or isinstance(y, float), 'Bad value: {}'.format(y)
+    assert isinstance(x, (int, float)), 'Bad value: {}'.format(x)
+    assert isinstance(y, (int, float)), 'Bad value: {}'.format(y)
     
     if x == y:
         return x
