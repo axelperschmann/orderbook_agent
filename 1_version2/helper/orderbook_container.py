@@ -37,6 +37,37 @@ class OrderbookContainer(object):
     def __repr__(self):
           return self.__str__()
         
+    def get_current_price(self, volume):
+        assert isinstance(volume, (int, float)) and volume != 0, "volume must not be 0"
+        price = 0
+        
+        if volume > 0:
+            orders = self.asks
+            orderdirection = 1
+        else:
+            orders = self.bids
+            orderdirection = -1
+            # volume = abs(volume)
+            
+        assert volume < orders.Amount.sum(), "Can't handle trade. Orderbookvolume exceeded {} vs {}".format(orders.Amount.sum(), volume)
+            
+        for row in orders.itertuples():
+            order_price = row[0]
+            order_volume = row[1]
+            
+            if volume >= order_volume:
+                current_order_volume = order_volume
+            else:
+                current_order_volume = volume
+            volume -= current_order_volume * orderdirection
+            price += current_order_volume * order_price
+            
+            if volume <= 0:
+                break
+                
+        return price
+        
+        
     def get_ask(self):
         if len(self.asks) > 0:
             ask = self.asks.index.values[0]
@@ -118,7 +149,7 @@ class OrderbookContainer(object):
     
     def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(16,8)):
         assert isinstance(normalized, bool)
-        assert (isinstance(range_factor, (float, int) and range_factor > 1) or range_factor is None
+        assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None
         assert isinstance(outfile, (str, unicode)) or outfile is None
         
         assert self.kind == 'orderbook',  "Can only plot OrderbookContainers of kind 'orderbook'. This OrderbookContainer is of type '{}'.".format(self.kind)
