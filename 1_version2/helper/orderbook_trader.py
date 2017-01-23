@@ -35,17 +35,6 @@ class OrderbookTradingSimulator(object):
         ob.bids.drop(drop_idx, inplace=True)
         
         return ob
-        
-    def check_current_value(self, orderbook, volume, limit=None):      
-        assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
-        assert isinstance(volume, (float, int)) and volume != 0
-        
-        # df = self.adjust_orderbook(df)
-        
-        # perform trade
-        trade_result = self.__perform_trade(orderbook, volume, limit=limit, simulation=True)
-        
-        return trade_result
     
     def trade_timespan(self, orderbooks, volume, limit, verbose=False, timespan=1, must_trade=False):
         assert isinstance(orderbooks, list)
@@ -56,7 +45,7 @@ class OrderbookTradingSimulator(object):
         assert isinstance(verbose, bool)
         assert isinstance(timespan, int) and timespan > 0
         assert isinstance(must_trade, bool)
-        
+        timestamp = orderbooks[0].timestamp
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
                                   'SPREAD': None,
@@ -72,7 +61,7 @@ class OrderbookTradingSimulator(object):
                                   'avg': 0,
                                   'cost_avg': 0,
                                   'cost':0},
-                            index=[orderbooks[0].timestamp])
+                            index=[timestamp])
         
         for t in range(timespan):
             assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
@@ -118,17 +107,17 @@ class OrderbookTradingSimulator(object):
                 print("No shares left at t={} (self.t={}), Done!".format(t, self.t))
                 break
                 
-        info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
-        
+        if info.volume_traded.values[0] != 0:
+            info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
+
         self.history = self.history.append(info, ignore_index=False)
         
-        # compute costs
-        self.history.cost_avg.iloc[-1] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] -
-                                                                                  self.history.CENTER.values[0])
-        
         if info.volume_traded.values[0] != 0:
-            self.history.cost.iloc[-1] = - 1. * (self.history.cashflow[-1] +
-                                                self.history.volume_traded.values[-1] * self.history.CENTER.values[0])
+            # compute costs
+            self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
+                                                          self.history.volume_traded.values[-1] * self.history.CENTER.values[0])
+            self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
+                                                                                               self.history.CENTER.values[0])
         
         if verbose:
             # self.summarize(ob)
