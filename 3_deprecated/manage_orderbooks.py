@@ -249,6 +249,80 @@ def place_order(orderbook, amount, trade_history=None, limit=None, verbose=True)
     assert len(info.keys()) == 8
     return info
 
+def extract_orderbooks_for_one_currencypair_newSlimDesign(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
+, float_precision=2, verbose=True):
+    assert len(datafiles)>0
+    assert isinstance(currency_pair, str)
+    assert isinstance(outfile, str)
+    assert isinstance(overwrite, bool)
+    assert isinstance(range_factor, float) or isinstance(range_factor, int) or not range_factor
+    if range_factor:
+        assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+    assert isinstance(float_precision, int)
+    assert float_precision>0
+    assert isinstance(verbose, bool)
+    
+    if overwrite:
+        filemode = "wb"
+        if verbose:    
+            print("Orderbook content will be written to '{}'".format(outfile))
+    else:
+        filemode = "ab"
+        if verbose:    
+            print("Orderbook content will be appended to '{}'".format(outfile))
+    
+    with open(outfile, filemode) as f_out:
+            
+        for fullpath in tqdm(datafiles):
+            with gzip.open(fullpath, 'r') as f_in:
+                df = json.load(f_in)
+                if df['orderbook_' + currency_pair].keys()[0] == 'error':
+                    continue
+                
+                timestamp = df['timestamp']                
+                df = df['orderbook_' + currency_pair]
+            if df.keys()[0] == 'error':
+                # Ignore empty, erroneous orderbooks.
+                # First time this message occured: 'orderbook_USDT_BTC', u'2017-01-10T12:34:02.126242'
+                print("Skipped {} at t={} do to contained 'error' message.".format('orderbook_' + currency_pair, timestamp))
+                continue
+                
+            # extract all ask orders
+            price  = [round(float(x[0]), float_precision) for x in df['asks']]
+            lowest_ask = price[0]
+            amount = [float(x[1]) for x in df['asks']]
+            asks = pd.DataFrame({'Amount': pd.Series(amount),
+                                 'Price': price})
+            asks = asks.groupby('Price', as_index=False).sum()
+            
+            # extract all bid orders
+            price  = [round(float(x[0]), float_precision) for x in df['bids']]
+            highhest_bid = price[0]
+            amount = [float(x[1]) for x in df['bids']]
+            bids = pd.DataFrame({'Amount': pd.Series(amount),
+                                 'Price': price})
+            bids = bids.groupby('Price', as_index=False).sum()
+            
+            center = lowest_ask - highhest_bid
+            
+            if range_factor:
+                # limited price range relative to center_log or norm_Price
+                asks = asks[asks <= center * range_factor].dropna()
+                bids = bids[bids >= center / range_factor].dropna()
+                
+                
+            
+            
+            obj = {'asks': asks.to_json(double_precision=15),
+                   'bids': bids.to_json(double_precision=15),
+                   'timestamp': timestamp,
+                   'center': center}
+
+            f_out.write(json.dumps(obj) + "\n")
+    
+    ## ToDo
+    
+    return -1
 
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
 , num_samples=None, float_precision=2, verbose=True, detailed=False):
