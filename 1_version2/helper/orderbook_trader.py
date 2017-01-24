@@ -9,11 +9,12 @@ from orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
-    def __init__(self, initial_volume=4):
+    def __init__(self, decisionfrequency=1, initial_volume=4):
         assert isinstance(initial_volume, (float, int)), "Parameter 'initial_volume' must be 'float' or 'int', given: {}".format(type(initial_volume))
         
         self.t = 0
         self.volume = initial_volume
+        self.timespan = decisionfrequency
         
         self.sell_history = pd.DataFrame({'Amount' : []}) 
         self.buy_history = pd.DataFrame({'Amount' : []}) # {'705.45': 3.172181}
@@ -36,21 +37,20 @@ class OrderbookTradingSimulator(object):
         
         return ob
     
-    def trade_timespan(self, orderbooks, volume, limit, verbose=False, timespan=1, must_trade=False):
+    def trade_timespan(self, orderbooks, volume, limit, verbose=False, must_trade=False):
         assert isinstance(orderbooks, list)
         assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
-        assert len(orderbooks)==timespan
+        assert len(orderbooks)>=self.timespan
         assert isinstance(volume, (float, int))
         assert (isinstance(limit, (float, int)) and limit > 0) or not limit
         assert isinstance(verbose, bool)
-        assert isinstance(timespan, int) and timespan > 0
         assert isinstance(must_trade, bool)
         timestamp = orderbooks[0].timestamp
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
                                   'SPREAD': None,
                                   'CENTER': None,
-                                  'TIMESPAN': timespan,
+                                  'T': self.timespan,
                                   'VOLUME': volume,
                                   'volume_traded': 0,
                                   'volume_left': volume,
@@ -63,7 +63,7 @@ class OrderbookTradingSimulator(object):
                                   'cost':0},
                             index=[timestamp])
         
-        for t in range(timespan):
+        for t in range(self.timespan):
             assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
             ob = orderbooks[t].copy()
             ob = self.adjust_orderbook(ob)
@@ -79,7 +79,7 @@ class OrderbookTradingSimulator(object):
                 # Do nothing!
                 return ob
                 
-            if must_trade and t == timespan-1:
+            if must_trade and t == self.timespan-1:
                 # must sell all remaining shares. Place Market Order!
                 print("Run out of time (t={}).\nTrade remaining {:.4f}/{:.4f} shares for current market order price".format(t,
                                                                                                   info.volume_left.values[0],
@@ -113,11 +113,16 @@ class OrderbookTradingSimulator(object):
         self.history = self.history.append(info, ignore_index=False)
         
         if info.volume_traded.values[0] != 0:
+            if volume > 0:
+                initial_bestprice = self.history.ASK.values[0]
+            elif volume < 0:
+                initial_bestprice = self.history.BID.values[0]
+            
             # compute costs
             self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
-                                                          self.history.volume_traded.values[-1] * self.history.CENTER.values[0])
+                                                          self.history.volume_traded.values[-1] * initial_bestprice)
             self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
-                                                                                               self.history.CENTER.values[0])
+                                                                                               initial_bestprice)
         
         if verbose:
             # self.summarize(ob)
