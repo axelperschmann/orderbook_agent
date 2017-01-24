@@ -147,7 +147,7 @@ class OrderbookContainer(object):
         self.asks['VolumeAcc'] = (self.asks.Volume).cumsum().values
 
     
-    def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(16,8)):
+    def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(16,8), outformat='pdf'):
         assert isinstance(normalized, bool)
         assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None
         assert isinstance(outfile, (str, unicode)) or outfile is None
@@ -208,10 +208,10 @@ class OrderbookContainer(object):
         plt.ylabel("Accumulated Volume")
         plt.xlabel("Price Level")
         if outfile:
-            if outfile[-4:] != '.png':
-                outfile = "{}.png".format(outfile)
-            plt.savefig(outfile, format='png')
-            print("Successfully saved'{}'".format(outfile))
+            if outfile[-4:] != ".{}".format(outformat):
+                outfile = "{}.{}".format(outfile, outformat)
+            plt.savefig(outfile, format=outformat)
+            print("Successfully saved '{}'".format(outfile))
             plt.close()
         else:
             plt.show()
