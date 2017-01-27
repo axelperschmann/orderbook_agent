@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from IPython.display import display
 
-from orderbook_container import OrderbookContainer
+from helper.orderbook_container import OrderbookContainer
 
 def orderbooks_difference(orderbook1, orderbook2):
     bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)

@@ -36,6 +36,7 @@ class OrderbookContainer(object):
     
     def __repr__(self):
           return self.__str__()
+
         
     def get_current_price(self, volume):
         assert isinstance(volume, (int, float)) and volume != 0, "volume must not be 0"
@@ -54,18 +55,21 @@ class OrderbookContainer(object):
         for row in orders.itertuples():
             order_price = row[0]
             order_volume = row[1]
-            
-            if volume >= order_volume:
+
+            if abs(volume) >= order_volume:
                 current_order_volume = order_volume
             else:
-                current_order_volume = volume
+                current_order_volume = abs(volume)
+                
             volume -= current_order_volume * orderdirection
             price += current_order_volume * order_price
             
-            if volume <= 0:
+            if abs(volume) == 0:
                 break
-                
-        return price
+
+        limit = order_price
+
+        return price, limit
         
         
     def get_ask(self):
