@@ -1,0 +1,21 @@
+\frametitle{Roadmap: Implementation}
+
+\begin{itemize}
+\item[\checkmark] Collect data
+\item[\checkmark] Implement OrderbookContainer
+\item[\checkmark] Implement OrderTradeSimulator
+\item[\qed] Train RL-Agent on repeating data window
+\begin{itemize}
+\item[\checkmark] Actions: limit = $ask +  a | a \in [..., -1, 0, 1, ...]$
+\item[\checkmark] Costs: Slippage as from initial \emph{ask}
+\item[\checkmark] States: [Remaining time, Remaining Volume]
+\item[\qed] Find optimal Q function for this data window
+\item[\qed] Learned strategy must have small costs
+\end{itemize}
+\item[\qed] Train RL-Agent on various, non-overlapping data windows
+\begin{itemize}
+\item[\qed] Expand State dimension: spread, ask-bid-ratio, ...
+\end{itemize}
+\item[\qed] Train RL-Agent on various currencypairs/stocks simultaneously
+\end{itemize}
+
