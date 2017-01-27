@@ -87,6 +87,10 @@ class OrderbookTradingSimulator(object):
             assert(abs(self.history.volume_traded.sum() + self.volume - self.history.VOLUME.values[0]) < EPSILON)
         
         for t in range(self.decisionfrequency):
+            if self.volume==0:
+                # Do nothing!
+                return info  #ob
+            
             assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
             ob = orderbooks[t].copy()
             ob = self.adjust_orderbook(ob)
@@ -103,10 +107,6 @@ class OrderbookTradingSimulator(object):
                 limit = best_price + limit_gap * agression_factor
                 info['LIMIT'] = limit          
                 info['LIMIT_MAX'] = max_limit
-
-            if self.volume==0:
-                # Do nothing!
-                return info  #ob
 
             if t == 0:
                 # record basic informations from beginning of trading period
