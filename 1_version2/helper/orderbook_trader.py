@@ -4,8 +4,9 @@ from IPython.display import display
 from tqdm import tqdm
 
 PRECISION = 10
+EPSILON = 0.00001
 
-from orderbook_container import OrderbookContainer
+from helper.orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
@@ -44,19 +45,22 @@ class OrderbookTradingSimulator(object):
         ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
         drop_idx = ob.asks[ob.asks<=0].dropna().index
         ob.asks.drop(drop_idx, inplace=True)
+        ob.asks.sort_index(inplace=True)
         # adjust bids
-        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)[::-1]
+        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
         drop_idx = ob.bids[ob.bids<=0].dropna().index
         ob.bids.drop(drop_idx, inplace=True)
         return ob
     
-    def trade(self, orderbooks, limit, verbose=False, must_trade=False):
+    def trade(self, orderbooks, limit=None, agression_factor=None, verbose=False, extrainfo={}):
         assert isinstance(orderbooks, list)
         assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         assert len(orderbooks)>=self.decisionfrequency
         assert (isinstance(limit, (float, int)) and limit > 0) or not limit
+        assert (isinstance(agression_factor, (float, int)) and not limit) or not agression_factor
         assert isinstance(verbose, bool)
-        assert isinstance(must_trade, bool)
+        assert isinstance(extrainfo, dict)
+
         timestamp = orderbooks[0].timestamp
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
@@ -71,20 +75,38 @@ class OrderbookTradingSimulator(object):
                                   'low': np.inf,
                                   'avg': 0,
                                   'cost_avg': 0,
-                                  'cost':0},
+                                  'cost':0,
+                                  'forced':False},
                             index=[timestamp])
 
+        if len(extrainfo) > 0:
+            extrainfo = pd.DataFrame(extrainfo, columns=extrainfo.keys(), index=[timestamp])
+            info = pd.concat([extrainfo, info], axis=1)
+
         if len(self.history) > 0:
-            assert(self.history.volume_traded.sum() + self.volume == self.history.VOLUME.values[0])
+            assert(abs(self.history.volume_traded.sum() + self.volume - self.history.VOLUME.values[0]) < EPSILON)
         
         for t in range(self.decisionfrequency):
             assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
             ob = orderbooks[t].copy()
             ob = self.adjust_orderbook(ob)
 
+            if t==0 and agression_factor is not None:
+
+                if self.order_type == 'buy':
+                    best_price = ob.get_ask()
+
+                elif self.order_type == 'sell':
+                    best_price = ob.get_bid()
+                current_price, max_limit = ob.get_current_price(self.volume)
+                limit_gap = max_limit - best_price
+                limit = best_price + limit_gap * agression_factor
+                info['LIMIT'] = limit          
+                info['LIMIT_MAX'] = max_limit
+
             if self.volume==0:
                 # Do nothing!
-                return ob
+                return info  #ob
 
             if t == 0:
                 # record basic informations from beginning of trading period
@@ -95,6 +117,7 @@ class OrderbookTradingSimulator(object):
                 
             if self.t == self.timespan-1:
                 # must sell all remaining shares. Place Market Order!
+                info['forced'] = True
                 if verbose:
                     print("Run out of time (t={}).\nTrade remaining {:.4f}/{:.4f} shares for current market order price".format(self.t,
                                                                                                     self.volume,
@@ -108,6 +131,7 @@ class OrderbookTradingSimulator(object):
             info.volume_traded += trade_result['volume']
             # info.volume_left = round((info.VOLUME - info.volume_traded).values[0], PRECISION)
             self.volume = round((info.VOLUME - info.volume_traded).values[0], PRECISION)
+
             if len(self.last_trade) > 0:
                 current_high = self.last_trade.index.max()
                 if current_high > info.high.values[0]:
@@ -149,14 +173,15 @@ class OrderbookTradingSimulator(object):
 
 
                 print("t={}: Traded {}, {:.4f} shares left".format(self.t, traded, self.volume))
-        return self.adjust_orderbook(ob)
+
+        return info  # self.adjust_orderbook(ob)
         
     def __perform_trade(self, orderbook, limit=None, simulation=False):
         assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
         assert isinstance(limit, (float, int)) or limit is None
 
         volume = self.volume
-        assert (self.order_type == 'buy' and volume > 0) or (self.order_type == 'ask' and volume < 0)
+        assert (self.order_type == 'buy' and volume > 0) or (self.order_type == 'sell' and volume < 0), "given: {} {}".format(self.order_type, volume)
         
         info = {'cashflow': 0,
                 'volume':   0,
@@ -175,6 +200,7 @@ class OrderbookTradingSimulator(object):
             orders = orderbook.bids.copy()
             if limit:
                 orders = orders[orders.index >= limit]
+        
         
         for pos in range(len(orders)):
             order = orders.iloc[pos]
@@ -195,7 +221,6 @@ class OrderbookTradingSimulator(object):
 
             if volume == 0:
                 break
-
         
 
         if not simulation:
