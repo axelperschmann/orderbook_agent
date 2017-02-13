@@ -5,6 +5,7 @@ import gzip
 import json
 import math
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
 import time
 from datetime import datetime
 from IPython.display import display
@@ -18,6 +19,95 @@ def orderbooks_difference(orderbook1, orderbook2):
     return OrderbookContainer(timestamp=other.timestamp,
                               bids = bids_diff[bids_diff != 0].dropna(),
                               asks = asks_diff[asks_diff != 0].dropna())
+
+
+def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    for t in range(T):
+        xs = np.arange(V)
+        
+        ys = np.zeros(V)
+        for v in range(V):
+            state = np.array([t, v])
+            qval = model.predict(state.reshape(1, STATE_DIM))
+            ys[v] = actions[np.argmin(qval)]
+        
+        ax.bar(xs, ys, zs=t, zdir='y', alpha=0.5)
+
+    ax.set_xlabel("time remaining")
+    ax.set_ylabel("shares remaining")
+    ax.set_zlabel("aggression level")
+    plt.title("Q function")
+    if outfile:
+        if outfile[-3:] != outformat:
+            outfile = "{}.{}".format(outfile, outformat)
+        plt.savefig(outfile, format=outformat)
+        print("Successfully saved '{}'".format(outfile))
+    else:
+        plt.show()
+    plt.close()
+
+
+def plot_episode(episode_windows, volume, figsize=(4,3), ylim=None, outfile=None, outformat='pdf'):
+    assert isinstance(episode_windows, list)
+    assert type(episode_windows[0]).__name__ == "OrderbookContainer"
+    assert isinstance(volume, (int, float))
+    assert volume != 0, "parameter 'volume' must not be 0"
+    assert isinstance(figsize, tuple) and len(figsize) == 2
+    assert (isinstance(ylim, tuple) and len(ylim) == 2) or ylim is None
+    assert isinstance(outfile, (str, unicode)) or outfile is None
+    assert isinstance(outformat, (str, unicode))
+    volume = abs(volume)
+    
+    center = []
+    ask = []
+    bid = []
+    price_ask = []
+    price_bid = []
+    timestamps = []
+    
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    for ob in episode_windows:
+        center.append(ob.get_center())
+        ask.append(ob.get_ask())
+        bid.append(ob.get_bid())
+        price_ask.append(ob.get_current_price(volume)[0] / volume)
+        price_bid.append(ob.get_current_price(-volume)[0] / volume)
+        timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
+
+        
+    plt.plot(timestamps, center, color='black', label='Center')
+    plt.plot(timestamps, price_ask, color='red', label='Market Price (Buying)')
+    plt.fill_between(timestamps, price_ask, ask, color='red', alpha=0.1)    
+    plt.plot(timestamps, ask, color='red', linestyle="--", label='Ask')
+
+    plt.plot(timestamps, bid, color='green', linestyle="--", label='Bid')
+    plt.fill_between(timestamps, price_bid, bid, color='green', alpha=0.1)
+    plt.plot(timestamps, price_bid, color='green', label='Market Price (Selling)')
+    
+    plt.title("Price comparison for a trade volume of {} shares".format(volume))
+
+    plt.xticks(rotation=40)
+    myFmt = mdates.DateFormatter('%H:%M')
+    ax.xaxis.set_major_formatter(myFmt)
+    
+    plt.ylabel('Price')
+    plt.xlabel(episode_windows[0].timestamp)
+    plt.legend(loc='best', prop={'size': 6})
+    if ylim is not None:
+        plt.ylim(ylim)
+    
+    if outfile is None:
+        plt.show()
+    else:
+        if outfile[-len(outformat):] != outformat:
+            outfile = "{}.{}".format(outfile, outformat)
+        plt.savefig(outfile, format=outformat)
+        print("successfully saved '{}'".format(outfile))
+    plt.close()
+
 
 
 def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
