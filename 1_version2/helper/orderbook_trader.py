@@ -41,10 +41,32 @@ class OrderbookTradingSimulator(object):
         self.history = pd.DataFrame([])
 
         self.summary = pd.DataFrame([])
+
+    def adjusted_orderbook(self):
+        ob = self.orderbooks[self.t].copy()
+
+        if self.t == 0:
+            return ob
+
+        # diff = ob.compare_with(self.orderbooks[self.t-1])
+        
+        # merge orderbook with own trade history
+        # adjust asks
+        ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
+        drop_idx = ob.asks[ob.asks<=0].dropna().index
+        ob.asks.drop(drop_idx, inplace=True)
+        ob.asks.sort_index(inplace=True)
+        
+        # adjust bids
+        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
+        drop_idx = ob.bids[ob.bids<=0].dropna().index
+        ob.bids.drop(drop_idx, inplace=True)
+
+        return ob
         
     def adjust_orderbook(self, orderbook):
         ob = orderbook.copy()
-
+        
         # merge orderbook with own trade history
         # adjust asks
         ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
@@ -55,6 +77,7 @@ class OrderbookTradingSimulator(object):
         ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
         drop_idx = ob.bids[ob.bids<=0].dropna().index
         ob.bids.drop(drop_idx, inplace=True)
+        
         return ob
     
     def trade(self, limit=None, agression_factor=None, verbose=False, extrainfo={}): # orderbooks, 
@@ -100,8 +123,8 @@ class OrderbookTradingSimulator(object):
                 return info  #ob
             
             assert type(self.orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(self.orderbooks[t]))
-            ob = self.orderbooks[t].copy()
-            ob = self.adjust_orderbook(ob)
+            
+            ob = self.adjusted_orderbook()
 
             if t==0 and agression_factor is not None:
 
@@ -133,7 +156,7 @@ class OrderbookTradingSimulator(object):
                 limit = None
                 
             # perform trade
-            trade_result = self.__perform_trade(limit)
+            trade_result = self.__perform_trade(ob, limit)
 
             info.cashflow += trade_result['cashflow']
             info.volume_traded += trade_result['volume']
@@ -187,8 +210,9 @@ class OrderbookTradingSimulator(object):
 
         return info  # self.adjust_orderbook(ob)
         
-    def __perform_trade(self, limit=None, simulation=False):
-        # assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
+    def __perform_trade(self, orderbook, limit=None, simulation=False):
+        assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
+        assert orderbook.timestamp == self.orderbooks[self.t].timestamp, "received wrong orderbook. Timestamp mismatch: {} vs. {}".format(orderbook.timestamp, self.orderbooks[self.t].timestamp)
         assert isinstance(limit, (float, int)) or limit is None
 
         volume = self.volume
@@ -200,12 +224,12 @@ class OrderbookTradingSimulator(object):
         
         if volume > 0:
             # buy from market
-            orders = self.orderbooks[self.t].asks.copy()
+            orders = orderbook.asks.copy()
             if limit:
                 orders = orders[orders.index <= limit]
         elif volume <0:
             # sell to market
-            orders = self.orderbooks[self.t].bids.copy()
+            orders = orderbook.bids.copy()
             if limit:
                 orders = orders[orders.index >= limit]
         
