@@ -10,16 +10,21 @@ from helper.orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
-    def __init__(self, volume, tradingperiods, decisionfrequency=1):
+    def __init__(self, orderbooks, volume, tradingperiods, decisionfrequency=1):
+        assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
+        print(len(orderbooks), tradingperiods, decisionfrequency)
+        assert len(orderbooks) == tradingperiods*decisionfrequency
         assert isinstance(volume, (float, int)) and volume != 0, "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(initial_volume))
         assert isinstance(tradingperiods, int) and tradingperiods>0, "Parameter 'tradingperiods' must be 'int' and larger than 0, given: {}".format(type(timespan))
         assert isinstance(decisionfrequency, int) and decisionfrequency > 0, "Parameter 'decisionfrequency' must be 'int', given: {}".format(type(decisionfrequency))
         # tradingperiods * decisionfrequency: trading period
 
+        self.orderbooks = orderbooks
         self.t = 0
         self.decisionfrequency = decisionfrequency
         self.timespan = tradingperiods * decisionfrequency
         self.volume = volume
+
         if volume > 0:
             # buy from market
             self.order_type = 'buy'
@@ -36,10 +41,32 @@ class OrderbookTradingSimulator(object):
         self.history = pd.DataFrame([])
 
         self.summary = pd.DataFrame([])
+
+    def adjusted_orderbook(self):
+        ob = self.orderbooks[self.t].copy()
+
+        if self.t == 0:
+            return ob
+
+        # diff = ob.compare_with(self.orderbooks[self.t-1])
+        
+        # merge orderbook with own trade history
+        # adjust asks
+        ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
+        drop_idx = ob.asks[ob.asks<=0].dropna().index
+        ob.asks.drop(drop_idx, inplace=True)
+        ob.asks.sort_index(inplace=True)
+        
+        # adjust bids
+        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
+        drop_idx = ob.bids[ob.bids<=0].dropna().index
+        ob.bids.drop(drop_idx, inplace=True)
+
+        return ob
         
     def adjust_orderbook(self, orderbook):
         ob = orderbook.copy()
-
+        
         # merge orderbook with own trade history
         # adjust asks
         ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
@@ -50,18 +77,19 @@ class OrderbookTradingSimulator(object):
         ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
         drop_idx = ob.bids[ob.bids<=0].dropna().index
         ob.bids.drop(drop_idx, inplace=True)
+        
         return ob
     
-    def trade(self, orderbooks, limit=None, agression_factor=None, verbose=False, extrainfo={}):
-        assert isinstance(orderbooks, list)
-        assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
-        assert len(orderbooks)>=self.decisionfrequency
+    def trade(self, limit=None, agression_factor=None, verbose=False, extrainfo={}): # orderbooks, 
+        # assert isinstance(orderbooks, list)
+        # assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
+        # assert len(orderbooks)>=self.decisionfrequency
         assert (isinstance(limit, (float, int)) and limit > 0) or not limit
         assert (isinstance(agression_factor, (float, int)) and not limit) or not agression_factor
         assert isinstance(verbose, bool)
         assert isinstance(extrainfo, dict)
 
-        timestamp = orderbooks[0].timestamp
+        timestamp = self.orderbooks[self.t].timestamp
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
                                   'SPREAD': None,
@@ -79,6 +107,9 @@ class OrderbookTradingSimulator(object):
                                   'forced':False},
                             index=[timestamp])
 
+        if self.volume == 0:
+            return -1
+
         if len(extrainfo) > 0:
             extrainfo = pd.DataFrame(extrainfo, columns=extrainfo.keys(), index=[timestamp])
             info = pd.concat([extrainfo, info], axis=1)
@@ -91,9 +122,9 @@ class OrderbookTradingSimulator(object):
                 # Do nothing!
                 return info  #ob
             
-            assert type(orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[t]))
-            ob = orderbooks[t].copy()
-            ob = self.adjust_orderbook(ob)
+            assert type(self.orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(self.orderbooks[t]))
+            
+            ob = self.adjusted_orderbook()
 
             if t==0 and agression_factor is not None:
 
@@ -159,10 +190,13 @@ class OrderbookTradingSimulator(object):
                 initial_bestprice = self.history.BID.values[0]
             
             # compute costs
-            self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
-                                                          self.history.volume_traded.values[-1] * initial_bestprice)
-            self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
-                                                                                               initial_bestprice)
+            # self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
+            #                                               self.history.volume_traded.values[-1] * initial_bestprice)
+            self.history.loc[timestamp, 'cost'] = self.history.volume_traded.values[-1] * (self.history.avg[-1] - self.history.CENTER.values[0]) / self.history.CENTER.values[0]
+
+
+            # self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
+            #                                                                                    initial_bestprice)
             
         if verbose:
             # self.summarize(ob)
@@ -178,6 +212,7 @@ class OrderbookTradingSimulator(object):
         
     def __perform_trade(self, orderbook, limit=None, simulation=False):
         assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
+        assert orderbook.timestamp == self.orderbooks[self.t].timestamp, "received wrong orderbook. Timestamp mismatch: {} vs. {}".format(orderbook.timestamp, self.orderbooks[self.t].timestamp)
         assert isinstance(limit, (float, int)) or limit is None
 
         volume = self.volume
@@ -187,9 +222,6 @@ class OrderbookTradingSimulator(object):
                 'volume':   0,
                 'trade_summary': pd.DataFrame({'Amount' : []})}
         
-        if not simulation:
-            self.t += 1
-
         if volume > 0:
             # buy from market
             orders = orderbook.asks.copy()
@@ -201,6 +233,8 @@ class OrderbookTradingSimulator(object):
             if limit:
                 orders = orders[orders.index >= limit]
         
+        if not simulation:
+            self.t += 1
         
         for pos in range(len(orders)):
             order = orders.iloc[pos]
