@@ -2,17 +2,40 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import pickle
+import math
 
 class QLearn:
-    def __init__(self, actions, epsilon=0.1, alpha=0.2, gamma=0.9):
+    def __init__(self, actions, epsilon=0.1):
         self.q = {}
         self.n = {}  # n is the number of times we have tried an action in a state
 
         self.epsilon = epsilon
-        self.alpha = alpha
-        self.gamma = gamma
         self.actions = actions
         self.actions_count = len(actions)
+
+    def __str__(self):
+        return("States: {}\nActions: {}".format(self.q, self.actions))
+
+    def save(self, outfile):
+        if outfile[-1:] != 'p':
+            outfile = '{}.p'.format(outfile)
+
+        with open(outfile, 'wb') as f:
+            pickle.dump(self, f)
+        print("Saved: '{}'".format(outfile))
+            # json.dump([self.q, self.n, self.epsilon, self.actions], f)
+
+    def load(self, infile):
+        if infile[-1:] != 'p':
+            infile = '{}.p'.format(infile)
+
+        with open(infile, 'rb') as f:
+            instance = pickle.load(f)
+            return instance
+            
+
+
 
     def get_action_index(self, action):
         action_idx = None
@@ -24,7 +47,7 @@ class QLearn:
 
     def getQ(self, state, action=None):
 
-        Q_values = self.q.get(state, np.zeros(self.actions_count))
+        Q_values = self.q.get(state, np.full(self.actions_count, np.nan))  # np.zeros(self.actions_count))
         
         if action:
             return Q_values[self.get_action_index(action)]
@@ -58,8 +81,17 @@ class QLearn:
         else:
             n = self.getN(state, action=action)
             
-            self.q[state][action_idx] = n/(n+1) * oldv[action_idx] + 1/(n+1) * (cost + np.min(self.getQ(new_state)))
+            if math.isnan(np.nanmin(self.getQ(new_state))):
+                minQ_new_state = 0
+            else:
+                minQ_new_state = np.nanmin(self.getQ(new_state))
 
+            if n == 0:
+                self.q[state][action_idx] = (cost + minQ_new_state)
+            else:
+                self.q[state][action_idx] = n/(n+1) * self.q[state][action_idx] + 1/(n+1) * (cost + minQ_new_state)
+
+            # self.q[state][action_idx] = n/(n+1) * old + 1/(n+1) * (cost + np.nanmin(self.getQ(new_state)))
             
             self.n[state][action_idx] = n + 1
 
@@ -69,7 +101,8 @@ class QLearn:
             print("random")
         else:
             q = self.getQ(state)
-
+            assert np.isnan(q).all() == False, "q table is empty for state '{}'. Probably a missmatch between parameter 'V' used for training and used now.".format(state) 
+            
             min_indices = np.where(q == q.min())[0]
             
             if len(min_indices) > 1:
@@ -80,30 +113,33 @@ class QLearn:
             action = self.actions[i]
         return action
 
-    def plot_Q2(self, V, T, I=5, outfile=None, outformat='pdf'):
-        print(V, I)
-
+    def plot_Q(self, V, T, I=5, z_represents='action', outfile=None, outformat='pdf'):
+        assert isinstance(z_represents, str) and z_represents in ['action', 'Q', 'both']
+        
         volumes = np.linspace(0, V, num=I)[1:]
         timesteps = range(1, T+1)
         grey_tones = np.linspace(1, 0.3, num=T)
         
-        print("volumes: {}".format(volumes))
-        print("V: {}, T: {}".format(V, T))
         fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
+        ax = [fig.add_subplot(111, projection='3d')]
         
-        length = (T+1) * I
+        length = T * (I-1)
         
         xpos = []
         ypos = []
         zpos = np.zeros(length)
 
-        dx = np.ones(length) * V/(I-1) / T*2.
+        dx = np.ones(length) * V/(I-1) / T  * 4.
 
-        dy = np.ones(length) / 2.
-        dz = []
+        dy = np.ones(length)  # / 2.
         colors = []
+
+        # dz:
+        dz = []
+        dz_action = []
+        dz_q = []
         
+        count = 0
         for t in timesteps:
             xs = volumes
 
@@ -122,77 +158,60 @@ class QLearn:
                     # same q value everywhere
                     dz.append(0)
                 else:
-                    dz.append(self.actions[np.argmin(q)])
+                    if np.all([math.isnan(val) for val in q]):
+                        xpos.pop()
+                        ypos.pop()
+                        colors.pop()
+                        dx = dx[:-1]
+                        dy = dy[:-1]
+                    else:
+                        dz_action.append(self.actions[np.nanargmin(q)])
+                        dz_q.append(np.nanmin(q))
 
         col = ['red', 'blue', 'magenta', 'green', 'yellow', 'grey']
         cmap=plt.get_cmap('Greys')
 
-        ax.bar3d(ypos, xpos, zpos, dx, dy, dz, color=colors, alpha=1)
-        
-        ax.set_ylabel("t")
-        ax.invert_xaxis()
-        plt.yticks(timesteps)
-        ax.set_xlabel("shares remaining")
-        plt.xticks(volumes)
-        
-        ax.set_zlabel("optimal action")
-        ax.set_zlim3d((0,18))
+        if z_represents == 'action':
+            ax[0].bar3d(ypos, xpos, zpos, dx, dy, dz=dz_action, color=colors, alpha=1)
+            ax[0].set_zlabel("optimal action")
+        elif z_represents == 'Q':
+            ax[0].bar3d(ypos, xpos, zpos, dx, dy, dz=dz_q, color=colors, alpha=1)
+            ax[0].set_zlabel("Q Value")
+        elif z_represents == 'both':
+            plt.close()
+            fig = plt.figure(figsize=(10,3))
+            ax = [fig.add_subplot(111, projection='3d')]
+            ax[0].bar3d(ypos, xpos, zpos, dx, dy, dz=dz_action, color=colors, alpha=1)
 
-        plt.title("Q function")
-        plt.show()
+            ax.append(fig.add_subplot(122, projection='3d'))
+            ax[1].bar3d(ypos, xpos, zpos, dx, dy, dz=dz_q, color=colors, alpha=1)
+            ax[1].set_zlabel("Q Value")
 
-    def plot_Q(self, V, T, I=5, outfile=None, outformat='pdf'):
-        # deprecated
-        volumes = np.linspace(0, V, num=I)
-        print("volumes", volumes)
-        print(V, T, 1)
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection='3d')
-        for t in range(T+1)[::-1]:
-            xs = volumes
+
+
+        # layout
+        for axis in ax:
+            axis.set_ylabel("t")
+            axis.set_xlim3d((volumes[0],volumes[-1]+volumes[0]))
+            axis.invert_xaxis()
             
-            ys = np.zeros(I)
-            for j, v in enumerate(volumes):
-                # print(t, v)
-                state = '[{}, {:2d}]'.format(t,int(v))
-                q = self.getQ(state)
-                # print(state, q, self.actions[np.argmin(q)])
-                ys[j] = self.actions[np.argmax(q)]
-                # state = np.array([t, v])
-                # qval = model.predict(state.reshape(1, STATE_DIM))
-                # ys[v] = actions[np.argmin(qval)]
-            print("t", t)
-            print("ys", ys)
-            colors = [['red', 'green'][int(x)] for x in (ys >= 0)]
+            axis.set_ylim3d((1,T+1))
+            axis.set_yticks(timesteps)
             
-
-            ax.bar(xs, ys, zs=int(t), zdir='y', color=colors, alpha=0.5)
-
-        ax.set_zlim3d((-3,max(ys)))
+            axis.set_xlabel("shares remaining")
+            axis.set_xticks(volumes)
+            plt.tight_layout()
+            # axis.set_zlim3d((0,18))
 
         
-        ax.invert_xaxis()
-        ax.invert_yaxis()
-        # ax.invert_zaxis()
-        ax.set_xlabel("shares remaining")
-        ax.set_ylabel("time remaining")
-        ax.set_zlabel("action")
-        plt.title("Q function")
+
+        fig.suptitle("Q function")
+        
         if outfile:
-            if outfile[-3:] != outformat:
+            if outfile[len(outformat):] != outformat:
                 outfile = "{}.{}".format(outfile, outformat)
             plt.savefig(outfile, format=outformat)
             print("Successfully saved '{}'".format(outfile))
         else:
             plt.show()
         plt.close()
-
-
-
-import math
-def ff(f,n):
-    fs = "{:f}".format(f)
-    if len(fs) < n:
-        return ("{:"+n+"s}").format(fs)
-    else:
-        return fs[:n]
