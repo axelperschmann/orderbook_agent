@@ -2,24 +2,30 @@ import pandas as pd
 import numpy as np
 import math
 import matplotlib.pyplot as plt
+import warnings
 from IPython.display import display
 
 class OrderbookContainer(object):
-    def __init__(self, timestamp, bids, asks, enriched=False, kind='orderbook'):
-        assert isinstance(timestamp, (unicode, str))
+    def __init__(self, timestamp, bids, asks, *, kind='orderbook'):  #enriched=False, 
+        assert isinstance(timestamp, str), "Parameter 'timestamp' is '{}', type={}".format(timestamp, type(timestamp))
         assert isinstance(bids, pd.DataFrame)  # and len(bids)>0
         assert isinstance(asks, pd.DataFrame)  # and len(asks)>0
-        assert isinstance(enriched, bool)
-        assert isinstance(kind, (unicode, str))
+        # assert isinstance(enriched, bool)
+        assert isinstance(kind, str)
         self.timestamp = timestamp
         self.bids = bids
         self.asks = asks  
         self.kind = kind
-        self.enriched = enriched
+        # self.enriched = enriched
 
     
     def copy(self):
-        return OrderbookContainer(self.timestamp, self.bids, self.asks, self.enriched, self.kind)
+        return OrderbookContainer(
+            timestamp=self.timestamp,
+            bids=self.bids,
+            asks=self.asks,
+            # enriched=self.enriched,
+            kind=self.kind)
     
     def compare_with(self, other):
         bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
@@ -138,47 +144,61 @@ class OrderbookContainer(object):
             raise("Error! Unknown orderbooktype: {}".format(self.kind))
         return df
         
-    def enrich(self):
-        self.enriched = True
-        self.bids['norm_Price'] = self.bids.index / self.get_center()
-        self.bids['Volume'] = self.bids.index * self.bids.Amount
-        self.bids['VolumeAcc'] = 0
-        self.bids['VolumeAcc'] = (self.bids.Volume).cumsum().values
-
-        self.asks['norm_Price'] = self.asks.index / self.get_center()
-        self.asks['Volume'] = self.asks.index * self.asks.Amount
-        self.asks['VolumeAcc'] = 0
-        self.asks['VolumeAcc'] = (self.asks.Volume).cumsum().values
+    # def enrich(self):
+    #     self.enriched = True
+    #     self.bids['norm_Price'] = self.bids.index / self.get_center()
+    #     self.bids['Volume'] = self.bids.index * self.bids.Amount
+    #     self.bids['VolumeAcc'] = 0
+    #     self.bids['VolumeAcc'] = (self.bids.Volume).cumsum().values
+    # 
+    #     self.asks['norm_Price'] = self.asks.index / self.get_center()
+    #     self.asks['Volume'] = self.asks.index * self.asks.Amount
+    #     self.asks['VolumeAcc'] = 0
+    #     self.asks['VolumeAcc'] = (self.asks.Volume).cumsum().values
+    # 
+    # def enrich_undo(self):
+    #     self.bids = pd.DataFrame(self.bids.Amount)
+    #     self.asks = pd.DataFrame(self.asks.Amount)
+    # 
+    #     self.enriched = False
 
     
-    def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(16,8), outformat='pdf'):
+    def plot(self, *, normalized=False, range_factor=None, outfile=None, figsize=(8,6), outformat='pdf'):
         assert isinstance(normalized, bool)
         assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None
-        assert isinstance(outfile, (str, unicode)) or outfile is None
+        assert isinstance(outfile, str) or outfile is None
         
         assert self.kind == 'orderbook',  "Can only plot OrderbookContainers of kind 'orderbook'. This OrderbookContainer is of type '{}'.".format(self.kind)
-        
-        if not self.enriched:
-            self.enrich()
             
         data = self.to_DataFrame(range_factor=range_factor)
+        
+        center = data[data.Type=='center'].index[0]
+        data['norm_Price'] = data.index / center
+        data['Volume'] = data.index * data.Amount
+        data['VolumeAcc'] = 0
+
+        bids = data[data.Type=='bid'][::-1].copy()
+        asks = data[data.Type=='ask'].copy()
+
+        bids['VolumeAcc'] = bids.Volume.cumsum()
+        asks['VolumeAcc'] = asks.Volume.cumsum()
 
         plt.figure(figsize=figsize)
         if normalized:
             if range_factor:
                 xlim = (1./range_factor, range_factor)
             else:
-                xlim = (data.norm_Price.values[0], data.norm_Price.values[-1])
+                xlim = (bids.norm_Price.values[-1], asks.norm_Price.values[-1])
 
-            bids_lim = data.VolumeAcc.values[0]
-            asks_lim = data.VolumeAcc.values[-1]
+            bids_lim = bids.VolumeAcc.values[-1]
+            asks_lim = asks.VolumeAcc.values[-1]
             y_factor = asks_lim + bids_lim
 
-            asks_x = data[data.Type == 'ask'].norm_Price.values
-            asks_y = data[data.Type == 'ask'].VolumeAcc / y_factor
+            asks_x = asks.norm_Price.values
+            asks_y = asks.VolumeAcc / y_factor
 
-            bids_x = data[data.Type == 'bid'].norm_Price.values
-            bids_y = data[data.Type == 'bid'].VolumeAcc / y_factor    # added .copy()
+            bids_x = bids.norm_Price.values
+            bids_y = bids.VolumeAcc / y_factor    # added .copy()
 
             # lowest bid and highhest ask should sum up to 100% of y-axis
             plt.ylim((0,1))
@@ -187,16 +207,16 @@ class OrderbookContainer(object):
             if range_factor:
                 xlim = (center/range_factor, center*range_factor)
             else:
-                xlim = (data.index.values[0], data.index.values[-1])
+                xlim = (bids.index.values[-1], asks.index.values[-1])
 
-            bids_lim = data[data.index>xlim[0]].VolumeAcc.values[0]
-            asks_lim = data[data.index<xlim[1]].VolumeAcc.values[-1]
+            bids_lim = bids[bids.index>xlim[0]].VolumeAcc.values[-1]
+            asks_lim = asks[asks.index<xlim[1]].VolumeAcc.values[-1]
             y_factor = asks_lim + bids_lim
 
-            asks_x = data[data.Type == 'ask'].index
-            asks_y = data[data.Type == 'ask'].VolumeAcc
-            bids_x = data[data.Type == 'bid'].index
-            bids_y = data[data.Type == 'bid'].VolumeAcc
+            asks_x = asks.index
+            asks_y = asks.VolumeAcc
+            bids_x = bids.index
+            bids_y = bids.VolumeAcc
 
             # lowest bid and highhest ask should sum up to 100% of y-axis
             plt.ylim((0,y_factor))
