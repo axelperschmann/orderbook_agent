@@ -49,15 +49,15 @@ def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
     plt.close()
 
 
-def plot_episode(episode_windows, volume, figsize=(4,3), ylim=None, outfile=None, outformat='pdf'):
+def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf'):
     assert isinstance(episode_windows, list)
     assert type(episode_windows[0]).__name__ == "OrderbookContainer"
     assert isinstance(volume, (int, float))
     assert volume != 0, "parameter 'volume' must not be 0"
     assert isinstance(figsize, tuple) and len(figsize) == 2
     assert (isinstance(ylim, tuple) and len(ylim) == 2) or ylim is None
-    assert isinstance(outfile, (str, unicode)) or outfile is None
-    assert isinstance(outformat, (str, unicode))
+    assert isinstance(outfile, str) or outfile is None
+    assert isinstance(outformat, str)
     volume = abs(volume)
     
     center = []
@@ -108,8 +108,6 @@ def plot_episode(episode_windows, volume, figsize=(4,3), ylim=None, outfile=None
         print("successfully saved '{}'".format(outfile))
     plt.close()
 
-
-
 def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
     assert isinstance(infile, str)
     assert isinstance(verbose, bool)
@@ -141,6 +139,7 @@ def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=Non
         asks['Amount'] = asks.Amount.values.astype(float)
         
         container = OrderbookContainer(dictionary['timestamp'], bids=bids, asks=asks)
+        
         data.append(container)
 
     if verbose:
