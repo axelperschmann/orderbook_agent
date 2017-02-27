@@ -10,20 +10,24 @@ from helper.orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
-    def __init__(self, orderbooks, volume, tradingperiods, decisionfrequency=1):
+    def __init__(self, orderbooks, volume, tradingperiods, *,        
+                 decisionfrequency=1, countermeasure_negativeShares=False):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
-        print(len(orderbooks), tradingperiods, decisionfrequency)
-        assert len(orderbooks) == tradingperiods*decisionfrequency
-        assert isinstance(volume, (float, int)) and volume != 0, "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(initial_volume))
+        assert len(orderbooks) == tradingperiods*decisionfrequency, "Expected len(orderbooks) to equal tradingperiods*decisionfrequency, but: {} != {}*{}".format(len(orderbooks), tradingperiods, decisionfrequency)
+        assert isinstance(volume, (float, int)) and volume != 0,  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(initial_volume))
         assert isinstance(tradingperiods, int) and tradingperiods>0, "Parameter 'tradingperiods' must be 'int' and larger than 0, given: {}".format(type(timespan))
         assert isinstance(decisionfrequency, int) and decisionfrequency > 0, "Parameter 'decisionfrequency' must be 'int', given: {}".format(type(decisionfrequency))
         # tradingperiods * decisionfrequency: trading period
 
         self.orderbooks = orderbooks
+
+        self.masterbook = orderbooks[0].copy()
+
         self.t = 0
         self.decisionfrequency = decisionfrequency
         self.timespan = tradingperiods * decisionfrequency
         self.volume = volume
+        self.countermeasure_negativeShares = countermeasure_negativeShares
 
         if volume > 0:
             # buy from market
@@ -40,47 +44,139 @@ class OrderbookTradingSimulator(object):
         
         self.history = pd.DataFrame([])
 
-        self.summary = pd.DataFrame([])
+        self.summary = {'amount': 0, 'cashflow':0, 'remaining': volume, 'cost':0}
 
-    def adjusted_orderbook(self):
-        ob = self.orderbooks[self.t].copy()
+    #def __merge_negative_shares(self, book, max_iterations=1000):
+    #    """
+    #    Orderbook adjustment can lead to negative share numbers.
+    #    Countermeasurement:
+    #    Iteratively merge price_levels showing a negative share
+    #    number with it's closest neighbour at that time.
+    #    """
+    #
+    #    drop_idx = book[book==0].dropna().index
+    #    book.drop(drop_idx, inplace=True)
+    #
+    #    loop_counter = 0
+    #    while loop_counter < max_iterations:
+    #        pricelevels_with_negative_shares = book[book<=0].dropna()
+    #        if len(pricelevels_with_negative_shares) == 0:
+    #            # Done, nothing to fix here
+    #            break
+    #
+    #        # get first candidate with negative shares and it's closest neighbour
+    #        price_level = pricelevels_with_negative_shares.index[0]
+    #        closest_neighbour = book.iloc[abs(book.index-price_level).argsort()[1]]
+    #
+    #        # merge candidate and neighbour, then drop candidate
+    #        book.loc[closest_neighbour.name] += pricelevels_with_negative_shares.loc[price_level]
+    #        book.drop(price_level, inplace=True)
+    #        
+    #        loop_counter  += 1
+    #    
+    #    return book
 
+    def __subtract_lastTrade_fromMaster(self):
+        if len(self.last_trade) > 0:
+            if self.order_type == 'buy':
+                self.masterbook.asks = self.masterbook.asks.subtract(self.last_trade, fill_value=0)
+                drop_idx = self.masterbook.asks[self.masterbook.asks.Amount<=0].Amount.dropna().index
+                self.masterbook.asks.drop(drop_idx, inplace=True)
+            elif self.order_type == 'sell':
+                # ToDo: Implement
+                raise NotImplementedError
+            else:
+                print(self.order_type)
+                raise NotImplementedError
+
+        self.last_trade = pd.DataFrame({'Amount' : []})
+
+
+    def adjust_masterbook(self):
+        
         if self.t == 0:
-            return ob
+            return
 
-        # diff = ob.compare_with(self.orderbooks[self.t-1])
-        
-        # merge orderbook with own trade history
-        # adjust asks
-        ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
-        drop_idx = ob.asks[ob.asks<=0].dropna().index
-        ob.asks.drop(drop_idx, inplace=True)
-        ob.asks.sort_index(inplace=True)
-        
-        # adjust bids
-        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
-        drop_idx = ob.bids[ob.bids<=0].dropna().index
-        ob.bids.drop(drop_idx, inplace=True)
+        # print("\n### START ###")
+        # display(self.masterbook.head(5))
+        # display(self.last_trade)
+        # self.__subtract_lastTrade_fromMaster()
+        # display(self.masterbook.head(5))
+        # display(self.last_trade)
+        # self.__subtract_lastTrade_fromMaster()
+        # display(self.masterbook.head(5))
+        # display(self.last_trade)
+        # print("###  END  ###")
 
-        return ob
+        # check difference between previous and current orderbook
+        ob_current = self.orderbooks[self.t]
+        ob_previous = self.orderbooks[self.t-1]
+        diff = ob_current.compare_with(ob_previous)
+
+        # adjust asks of masterbook
+        self.masterbook.asks = self.masterbook.asks.add(diff.asks, fill_value=0)
+        drop_idx = self.masterbook.asks[self.masterbook.asks.Amount<=0].Amount.dropna().index
+        self.masterbook.asks.drop(drop_idx, inplace=True)
+        self.masterbook.asks.sort_index(inplace=True)
+
+        # adjust bids of masterbook
+        self.masterbook.bids = self.masterbook.bids.add(diff.bids, fill_value=0)
+        drop_idx = self.masterbook.bids[self.masterbook.bids.Amount<=0].Amount.dropna().index
+        self.masterbook.bids.drop(drop_idx, inplace=True)
+        self.masterbook.bids.sort_index(inplace=True, ascending=False)
+
+        self.masterbook.timestamp = ob_current.timestamp
+
+
+    # def adjusted_orderbook(self):
+    #     ob = self.orderbooks[self.t].copy()
+    #     
+    #     if self.t == 0:
+    #         # No adjustment necessary at beginning of trade period
+    #         return ob        
+    # 
+    #     # merge current orderbook with our stored trade history
+    #     if len(self.buy_history) > 0:
+    #         ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
+    #         
+    #         # Fix any occurences of negative share numbers.
+    #         if self.countermeasure_negativeShares:
+    #             self.__merge_negative_shares(ob.asks)
+    #             
+    #         drop_idx = ob.asks[ob.asks<=0].dropna().index
+    #         ob.asks.drop(drop_idx, inplace=True)
+    #         ob.asks.sort_index(inplace=True)
+    # 
+    #     if len(self.sell_history) > 0:
+    #         ### adjust bids
+    #         ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
+    #         
+    #         # Fix any occurences of negative share numbers.
+    #         if self.countermeasure_negativeShares:
+    #             self.__merge_negative_shares(ob.bids)
+    # 
+    #         drop_idx = ob.bids[ob.bids<=0].dropna().index
+    #         ob.bids.drop(drop_idx, inplace=True)
+    # 
+    #     return ob
         
-    def adjust_orderbook(self, orderbook):
-        ob = orderbook.copy()
-        
-        # merge orderbook with own trade history
-        # adjust asks
-        ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
-        drop_idx = ob.asks[ob.asks<=0].dropna().index
-        ob.asks.drop(drop_idx, inplace=True)
-        ob.asks.sort_index(inplace=True)
-        # adjust bids
-        ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
-        drop_idx = ob.bids[ob.bids<=0].dropna().index
-        ob.bids.drop(drop_idx, inplace=True)
-        
-        return ob
+    # def adjust_orderbook(self, orderbook):
+    #     ob = orderbook.copy()
+    #     
+    #     # merge orderbook with own trade history
+    #     # adjust asks
+    #     ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
+    #     drop_idx = ob.asks[ob.asks<=0].dropna().index
+    #     ob.asks.drop(drop_idx, inplace=True)
+    #     ob.asks.sort_index(inplace=True)
+    #     # adjust bids
+    #     ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
+    #     drop_idx = ob.bids[ob.bids<=0].dropna().index
+    #     ob.bids.drop(drop_idx, inplace=True)
+    #     
+    #     return ob
     
-    def trade(self, limit=None, agression_factor=None, verbose=False, extrainfo={}): # orderbooks, 
+    def trade(self, limit=None, agression_factor=None, *, verbose=False, extrainfo={}): # orderbooks, 
         # assert isinstance(orderbooks, list)
         # assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         # assert len(orderbooks)>=self.decisionfrequency
@@ -107,6 +203,7 @@ class OrderbookTradingSimulator(object):
                                   'forced':False},
                             index=[timestamp])
 
+
         if self.volume == 0:
             return -1
 
@@ -124,20 +221,8 @@ class OrderbookTradingSimulator(object):
             
             assert type(self.orderbooks[t]).__name__ == OrderbookContainer.__name__, "{}".format(type(self.orderbooks[t]))
             
-            ob = self.adjusted_orderbook()
-
-            if t==0 and agression_factor is not None:
-
-                if self.order_type == 'buy':
-                    best_price = ob.get_ask()
-
-                elif self.order_type == 'sell':
-                    best_price = ob.get_bid()
-                current_price, max_limit = ob.get_current_price(self.volume)
-                limit_gap = max_limit - best_price
-                limit = best_price + limit_gap * agression_factor
-                info['LIMIT'] = limit          
-                info['LIMIT_MAX'] = max_limit
+            self.adjust_masterbook()
+            ob = self.masterbook
 
             if t == 0:
                 # record basic informations from beginning of trading period
@@ -145,6 +230,19 @@ class OrderbookTradingSimulator(object):
                 info.BID = ob.get_bid()
                 info.SPREAD = (info.ASK - info.BID)
                 info.CENTER = ob.get_center()
+
+                if agression_factor is not None:
+
+                    if self.order_type == 'buy':
+                        best_price = ob.get_ask()
+
+                    elif self.order_type == 'sell':
+                        best_price = ob.get_bid()
+                    current_price, max_limit = ob.get_current_price(self.volume)
+                    limit_gap = max_limit - best_price
+                    limit = best_price + limit_gap * agression_factor
+                    info['LIMIT'] = limit          
+                    info['LIMIT_MAX'] = max_limit
                 
             if self.t == self.timespan-1:
                 # must sell all remaining shares. Place Market Order!
@@ -156,7 +254,7 @@ class OrderbookTradingSimulator(object):
                 limit = None
                 
             # perform trade
-            trade_result = self.__perform_trade(ob, limit)
+            trade_result = self.__perform_trade(ob, limit=limit)
 
             info.cashflow += trade_result['cashflow']
             info.volume_traded += trade_result['volume']
@@ -183,20 +281,29 @@ class OrderbookTradingSimulator(object):
 
         self.history = self.history.append(info, ignore_index=False)
         
+        
+        
         if info.volume_traded.values[0] != 0:
             if info.VOLUME.values[0] > 0:
                 initial_bestprice = self.history.ASK.values[0]
             elif info.VOLUME.values[0] < 0:
                 initial_bestprice = self.history.BID.values[0]
-            
+
             # compute costs
             # self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
             #                                               self.history.volume_traded.values[-1] * initial_bestprice)
             self.history.loc[timestamp, 'cost'] = self.history.volume_traded.values[-1] * (self.history.avg[-1] - self.history.CENTER.values[0]) / self.history.CENTER.values[0]
 
+            self.summary['amount'] += info.volume_traded.values[0]
+            self.summary['cashflow'] += info.cashflow.values[0]
+            self.summary['remaining'] = self.volume
+            self.summary['cost'] += self.history.loc[timestamp, 'cost']
 
             # self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
             #                                                                                    initial_bestprice)
+            self.__subtract_lastTrade_fromMaster()
+
+        assert len(self.last_trade) == 0, "'self.last_trade' has a length of '{}', but should be empty, since masterbook was just updated.".format(len(self.last_trade))
             
         if verbose:
             # self.summarize(ob)
@@ -208,9 +315,10 @@ class OrderbookTradingSimulator(object):
 
                 print("t={}: Traded {}, {:.4f} shares left".format(self.t, traded, self.volume))
 
-        return info  # self.adjust_orderbook(ob)
+
+        return self.summary  # self.adjust_orderbook(ob)
         
-    def __perform_trade(self, orderbook, limit=None, simulation=False):
+    def __perform_trade(self, orderbook, *, limit=None, simulation=False):
         assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
         assert orderbook.timestamp == self.orderbooks[self.t].timestamp, "received wrong orderbook. Timestamp mismatch: {} vs. {}".format(orderbook.timestamp, self.orderbooks[self.t].timestamp)
         assert isinstance(limit, (float, int)) or limit is None
