@@ -10,8 +10,7 @@ from helper.orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
-    def __init__(self, orderbooks, volume, tradingperiods, *,        
-                 decisionfrequency=1, countermeasure_negativeShares=False):
+    def __init__(self, orderbooks, volume, tradingperiods, *, decisionfrequency=1):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         assert len(orderbooks) == tradingperiods*decisionfrequency, "Expected len(orderbooks) to equal tradingperiods*decisionfrequency, but: {} != {}*{}".format(len(orderbooks), tradingperiods, decisionfrequency)
         assert isinstance(volume, (float, int)) and volume != 0,  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(initial_volume))
@@ -20,14 +19,12 @@ class OrderbookTradingSimulator(object):
         # tradingperiods * decisionfrequency: trading period
 
         self.orderbooks = orderbooks
-
         self.masterbook = orderbooks[0].copy()
 
         self.t = 0
         self.decisionfrequency = decisionfrequency
         self.timespan = tradingperiods * decisionfrequency
         self.volume = volume
-        self.countermeasure_negativeShares = countermeasure_negativeShares
 
         if volume > 0:
             # buy from market
@@ -40,7 +37,6 @@ class OrderbookTradingSimulator(object):
         
         self.sell_history = pd.DataFrame({'Amount' : []}) 
         self.buy_history = pd.DataFrame({'Amount' : []})
-        self.last_trade = pd.DataFrame({'Amount' : []})
         
         self.history = pd.DataFrame([])
 
@@ -76,10 +72,10 @@ class OrderbookTradingSimulator(object):
     #    
     #    return book
 
-    def __subtract_lastTrade_fromMaster(self):
-        if len(self.last_trade) > 0:
+    def __subtract_lastTrade_fromMaster(self, last_trade):
+        if len(last_trade) > 0:
             if self.order_type == 'buy':
-                self.masterbook.asks = self.masterbook.asks.subtract(self.last_trade, fill_value=0)
+                self.masterbook.asks = self.masterbook.asks.subtract(last_trade, fill_value=0)
                 drop_idx = self.masterbook.asks[self.masterbook.asks.Amount<=0].Amount.dropna().index
                 self.masterbook.asks.drop(drop_idx, inplace=True)
             elif self.order_type == 'sell':
@@ -89,24 +85,10 @@ class OrderbookTradingSimulator(object):
                 print(self.order_type)
                 raise NotImplementedError
 
-        self.last_trade = pd.DataFrame({'Amount' : []})
-
 
     def adjust_masterbook(self):
-        
         if self.t == 0:
             return
-
-        # print("\n### START ###")
-        # display(self.masterbook.head(5))
-        # display(self.last_trade)
-        # self.__subtract_lastTrade_fromMaster()
-        # display(self.masterbook.head(5))
-        # display(self.last_trade)
-        # self.__subtract_lastTrade_fromMaster()
-        # display(self.masterbook.head(5))
-        # display(self.last_trade)
-        # print("###  END  ###")
 
         # check difference between previous and current orderbook
         ob_current = self.orderbooks[self.t]
@@ -127,54 +109,6 @@ class OrderbookTradingSimulator(object):
 
         self.masterbook.timestamp = ob_current.timestamp
 
-
-    # def adjusted_orderbook(self):
-    #     ob = self.orderbooks[self.t].copy()
-    #     
-    #     if self.t == 0:
-    #         # No adjustment necessary at beginning of trade period
-    #         return ob        
-    # 
-    #     # merge current orderbook with our stored trade history
-    #     if len(self.buy_history) > 0:
-    #         ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
-    #         
-    #         # Fix any occurences of negative share numbers.
-    #         if self.countermeasure_negativeShares:
-    #             self.__merge_negative_shares(ob.asks)
-    #             
-    #         drop_idx = ob.asks[ob.asks<=0].dropna().index
-    #         ob.asks.drop(drop_idx, inplace=True)
-    #         ob.asks.sort_index(inplace=True)
-    # 
-    #     if len(self.sell_history) > 0:
-    #         ### adjust bids
-    #         ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
-    #         
-    #         # Fix any occurences of negative share numbers.
-    #         if self.countermeasure_negativeShares:
-    #             self.__merge_negative_shares(ob.bids)
-    # 
-    #         drop_idx = ob.bids[ob.bids<=0].dropna().index
-    #         ob.bids.drop(drop_idx, inplace=True)
-    # 
-    #     return ob
-        
-    # def adjust_orderbook(self, orderbook):
-    #     ob = orderbook.copy()
-    #     
-    #     # merge orderbook with own trade history
-    #     # adjust asks
-    #     ob.asks = ob.asks.subtract(self.buy_history, fill_value=0)
-    #     drop_idx = ob.asks[ob.asks<=0].dropna().index
-    #     ob.asks.drop(drop_idx, inplace=True)
-    #     ob.asks.sort_index(inplace=True)
-    #     # adjust bids
-    #     ob.bids = ob.bids.subtract(self.sell_history, fill_value=0)  #[::-1]
-    #     drop_idx = ob.bids[ob.bids<=0].dropna().index
-    #     ob.bids.drop(drop_idx, inplace=True)
-    #     
-    #     return ob
     
     def trade(self, limit=None, agression_factor=None, *, verbose=False, extrainfo={}): # orderbooks, 
         # assert isinstance(orderbooks, list)
@@ -261,20 +195,21 @@ class OrderbookTradingSimulator(object):
             # info.volume_left = round((info.VOLUME - info.volume_traded).values[0], PRECISION)
             self.volume = round((info.VOLUME - info.volume_traded).values[0], PRECISION)
 
-            if len(self.last_trade) > 0:
-                current_high = self.last_trade.index.max()
+            if len(trade_result.get('trade_summary')) > 0:
+                current_high = trade_result.get('trade_summary').index.max()
                 if current_high > info.high.values[0]:
                     info.high = current_high
                     
-                current_low = self.last_trade.index.min()
+                current_low = trade_result.get('trade_summary').index.min()
                 if current_low < info.low.values[0]:
                     info.low = current_low
             
-            
+            self.t += 1
             if abs(self.volume) == 0:
-                if verbose:
-                    print("No shares left at t={} (self.t={}), Done!".format(t, self.t))
+                # if verbose:
+                #     print("No shares left after t={}. Done!".format(self.t-1))
                 break
+            
                 
         if info.volume_traded.values[0] != 0:
             info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
@@ -300,21 +235,16 @@ class OrderbookTradingSimulator(object):
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
 
             # self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
-            #                                                                                    initial_bestprice)
-            self.__subtract_lastTrade_fromMaster()
-
-        assert len(self.last_trade) == 0, "'self.last_trade' has a length of '{}', but should be empty, since masterbook was just updated.".format(len(self.last_trade))
+            #                                                                                    initial_bestprice) 
             
         if verbose:
-            # self.summarize(ob)
             if info.volume_traded.values[0] != 0:
                 traded = "{:.4f}/{:.4f} shares for {}".format(info.volume_traded.values[0],
                                                 info.volume_traded.values[0]+self.volume,
                                                 info.cashflow.values[0])
 
 
-                print("t={}: Traded {}, {:.4f} shares left".format(self.t, traded, self.volume))
-
+                print("t={}: Traded {}, {:.4f} shares left".format(self.t-1, traded, self.volume))
 
         return self.summary  # self.adjust_orderbook(ob)
         
@@ -341,9 +271,6 @@ class OrderbookTradingSimulator(object):
             if limit:
                 orders = orders[orders.index >= limit]
         
-        if not simulation:
-            self.t += 1
-        
         for pos in range(len(orders)):
             order = orders.iloc[pos]
             price = order.name
@@ -367,7 +294,7 @@ class OrderbookTradingSimulator(object):
 
         if not simulation:
             self.volume_nottraded = volume
-            self.last_trade = info['trade_summary']
+            
             if self.order_type == 'buy':
                 self.buy_history = self.buy_history.add(info['trade_summary'], fill_value=0)
             elif self.order_type == 'sell':
@@ -377,5 +304,7 @@ class OrderbookTradingSimulator(object):
         
         # Round trading volume to prevent subsequent rounding issues like volume_left = -1.421085e-14 (vs. intended 0.0)
         info['volume'] = round(info['volume'], PRECISION)
+
+        self.__subtract_lastTrade_fromMaster(last_trade=info['trade_summary'])
         
         return info
