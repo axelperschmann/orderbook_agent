@@ -85,10 +85,23 @@ class OrderbookTradingSimulator(object):
                 print(self.order_type)
                 raise NotImplementedError
 
+    def get_next_masterbook(self):
+        if self.t < len(self.orderbooks)-1:
 
-    def adjust_masterbook(self):
+            self.t += 1
+            masterbook = self.adjust_masterbook(inplace=False)
+            self.t -= 1
+
+            return masterbook
+        else:
+            return self.masterbook
+
+
+    def adjust_masterbook(self, inplace=True):
         if self.t == 0:
             return
+
+        masterbook = self.masterbook.copy()
 
         # check difference between previous and current orderbook
         ob_current = self.orderbooks[self.t]
@@ -96,18 +109,23 @@ class OrderbookTradingSimulator(object):
         diff = ob_current.compare_with(ob_previous)
 
         # adjust asks of masterbook
-        self.masterbook.asks = self.masterbook.asks.add(diff.asks, fill_value=0)
-        drop_idx = self.masterbook.asks[self.masterbook.asks.Amount<=0].Amount.dropna().index
-        self.masterbook.asks.drop(drop_idx, inplace=True)
-        self.masterbook.asks.sort_index(inplace=True)
+        masterbook.asks = masterbook.asks.add(diff.asks, fill_value=0)
+        drop_idx = masterbook.asks[masterbook.asks.Amount<=0].Amount.dropna().index
+        masterbook.asks.drop(drop_idx, inplace=True)
+        masterbook.asks.sort_index(inplace=True)
 
         # adjust bids of masterbook
-        self.masterbook.bids = self.masterbook.bids.add(diff.bids, fill_value=0)
-        drop_idx = self.masterbook.bids[self.masterbook.bids.Amount<=0].Amount.dropna().index
-        self.masterbook.bids.drop(drop_idx, inplace=True)
-        self.masterbook.bids.sort_index(inplace=True, ascending=False)
+        masterbook.bids = masterbook.bids.add(diff.bids, fill_value=0)
+        drop_idx = masterbook.bids[masterbook.bids.Amount<=0].Amount.dropna().index
+        masterbook.bids.drop(drop_idx, inplace=True)
+        masterbook.bids.sort_index(inplace=True, ascending=False)
 
-        self.masterbook.timestamp = ob_current.timestamp
+        masterbook.timestamp = ob_current.timestamp
+
+        if inplace:
+            self.masterbook = masterbook
+        else:
+            return masterbook
 
     
     def trade(self, limit=None, agression_factor=None, *, verbose=False, extrainfo={}): # orderbooks, 
