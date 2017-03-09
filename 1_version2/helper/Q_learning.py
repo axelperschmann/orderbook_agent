@@ -9,30 +9,6 @@ from .orderbook_container import OrderbookContainer
 import json
 from IPython.display import display
 
-## sample config
-config = {
-    'actions': [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-    'vol_intervals': 10,
-
-}
-
-class QLearnEnvironment(object):
-    def __init__(self, volume, vol_intervals=None, timesteps=None, actions=None):
-        self.actions = actions or [-1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
-        self.action_count = len(self.actions)
-        self.vol_intervals = vol_intervals or 10
-        self.timesteps = timesteps or 4
-        self.volume = volume
-
-
-    def __str__(self):
-        return "\n".join(["QLearnEnvironment",
-            "actions: {}".format(self.actions),
-            "action_count: {}".format(self.action_count),
-            "vol_intervals: {}".format(self.vol_intervals),
-            "timesteps: {}".format(self.timesteps),
-            "volume: {}".format(self.volume)]
-            )
 
 def round_custombase(val, base):
     return round(val / base) * base
