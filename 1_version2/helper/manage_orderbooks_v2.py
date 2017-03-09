@@ -9,8 +9,93 @@ import matplotlib.dates as mdates
 import time
 from datetime import datetime
 from IPython.display import display
+import itertools
 
 from helper.orderbook_container import OrderbookContainer
+
+class OrderbookEpisodesGenerator(object):
+    
+    def __init__(self, filename, episode_length, slicerange=None):
+        assert isinstance(filename, str), "Parameter 'filename' must be of type 'str' and should point to an existing file."
+        assert isinstance(episode_length, int) and episode_length>1, "Parameter 'episode_length' must be of type 'int' and larger than 1."
+        
+        self.filename = filename
+        self.episode_length = episode_length
+        self.slice = slicerange
+    
+    def __len__(self):
+        with open(self.filename) as f:
+            count = sum(1 for line in f)
+        
+        count = int(count/self.episode_length)
+        
+        if self.slice is not None:
+            count = min(count, self.slice.stop)
+            count -= self.slice.start
+            count /= self.slice.step
+        
+        return math.ceil(count)
+
+    def __getitem__(self, index):
+        assert isinstance(index, (int, slice))
+
+        if isinstance(index, int):
+            start = index * self.episode_length
+        elif isinstance(index, slice):
+            start = index.start or 0
+            stop = index.stop or len(self)
+            step = index.step or 1
+
+            if start < 0:
+                start = len(self) + start
+            if stop < 0:
+                stop = len(self) + stop
+
+            return OrderbookEpisodesGenerator(filename=self.filename, episode_length=self.episode_length, slicerange=slice(start, stop, step))
+            # return [self[idx] for idx in range(start, stop, step)]
+        
+        with open(self.filename, "r+") as f:
+            for _ in range(start):
+                 next(f)
+            episode = []
+            for e in range(self.episode_length):
+                line = next(f)
+                container = convert_line_to_OrderbookContainer(line)
+
+                episode.append(container)
+            return episode
+
+    def __iter__(self):
+        with open(self.filename, "r+") as f:
+            if self.slice is not None:
+                for i in range(self.slice.start * self.episode_length):
+                    next(f)
+
+            counter = 0
+            while True:
+                if self.slice is not None:
+                    if counter % self.slice.step != 0:
+                        counter += 1
+                        for i in range(self.episode_length):
+                            next(f)
+                        continue
+                    if counter == self.slice.stop - self.slice.start:
+                        break
+                counter += 1
+
+                episode = []
+                for e in range(self.episode_length):
+                    line = next(f)
+                    container = convert_line_to_OrderbookContainer(line)
+
+                    episode.append(container)
+
+
+                #if len(episode) == self.episode_length:
+                yield episode
+                # else:
+                #     raise StopIteration
+
 
 def orderbooks_difference(orderbook1, orderbook2):
     bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
@@ -49,15 +134,15 @@ def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
     plt.close()
 
 
-def plot_episode(episode_windows, volume, figsize=(4,3), ylim=None, outfile=None, outformat='pdf'):
+def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf'):
     assert isinstance(episode_windows, list)
     assert type(episode_windows[0]).__name__ == "OrderbookContainer"
     assert isinstance(volume, (int, float))
     assert volume != 0, "parameter 'volume' must not be 0"
     assert isinstance(figsize, tuple) and len(figsize) == 2
     assert (isinstance(ylim, tuple) and len(ylim) == 2) or ylim is None
-    assert isinstance(outfile, (str, unicode)) or outfile is None
-    assert isinstance(outformat, (str, unicode))
+    assert isinstance(outfile, str) or outfile is None
+    assert isinstance(outformat, str)
     volume = abs(volume)
     
     center = []
@@ -108,6 +193,20 @@ def plot_episode(episode_windows, volume, figsize=(4,3), ylim=None, outfile=None
         print("successfully saved '{}'".format(outfile))
     plt.close()
 
+def convert_line_to_OrderbookContainer(line):
+    dictionary = json.loads(line)
+
+    bids = pd.DataFrame.from_dict(dictionary['bids'])[::-1]
+    asks = pd.DataFrame.from_dict(dictionary['asks'])
+
+    # Must undo float to string conversion, which was necessary to prevent rounding
+    # issues, occuring when DataFrame.to_dict() is called
+    bids.index = bids.index.astype(float)
+    bids['Amount'] = bids.Amount.values.astype(float)
+    asks.index = asks.index.astype(float)
+    asks['Amount'] = asks.Amount.values.astype(float)
+
+    return OrderbookContainer(dictionary['timestamp'], bids=bids, asks=asks)
 
 
 def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=None):
@@ -141,6 +240,7 @@ def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=Non
         asks['Amount'] = asks.Amount.values.astype(float)
         
         container = OrderbookContainer(dictionary['timestamp'], bids=bids, asks=asks)
+        
         data.append(container)
 
     if verbose:
