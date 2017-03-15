@@ -10,6 +10,7 @@ import json
 from IPython.display import display
 
 
+
 def round_custombase(val, base):
     return round(val / base) * base
 
@@ -23,7 +24,7 @@ def state_as_string(time_left, volume_left, orderbook=None):
         spread = orderbook.get_ask() - orderbook.get_bid()
         # spread = round(spread, 1)
         
-        if spread < 1.:
+        if spread <= 1.:
             spread_discrete = 0
         elif spread > 2.:
             spread_discrete = 2
@@ -246,7 +247,7 @@ class QLearn:
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
         fig.suptitle(title)
-        
+
         if outfile:
             if outfile[len(outformat):] != outformat:
                 outfile = "{}.{}".format(outfile, outformat)
