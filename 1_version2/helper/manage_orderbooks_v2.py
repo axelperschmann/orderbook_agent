@@ -134,7 +134,7 @@ def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
     plt.close()
 
 
-def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf'):
+def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf', intervals=1, legend=True):
     assert isinstance(episode_windows, list)
     assert type(episode_windows[0]).__name__ == "OrderbookContainer"
     assert isinstance(volume, (int, float))
@@ -143,36 +143,51 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
     assert (isinstance(ylim, tuple) and len(ylim) == 2) or ylim is None
     assert isinstance(outfile, str) or outfile is None
     assert isinstance(outformat, str)
+    assert (isinstance(intervals, int) and intervals > 0) or intervals is None
+    assert isinstance(legend, bool)
     volume = abs(volume)
     
     center = []
     ask = []
     bid = []
-    price_ask = []
-    price_bid = []
+    price_ask = {}
+    price_bid = {}
+    for i in range(intervals):
+        price_ask[i] = []
+        price_bid[i] = []
+
     timestamps = []
-    
     
     fig, ax = plt.subplots(figsize=figsize)
     for ob in episode_windows:
         center.append(ob.get_center())
         ask.append(ob.get_ask())
         bid.append(ob.get_bid())
-        price_ask.append(ob.get_current_price(volume)[0] / volume)
-        price_bid.append(ob.get_current_price(-volume)[0] / volume)
+
+        for i in range(intervals):
+            volume_fraction = 1.*(i+1)/intervals * volume
+            price_ask[i].append(ob.get_current_price(volume_fraction)[0] / volume_fraction)
+            price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
         timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
 
         
     plt.plot(timestamps, center, color='black', label='Center')
-    plt.plot(timestamps, price_ask, color='red', label='Market Price (Buying)')
-    plt.fill_between(timestamps, price_ask, ask, color='red', alpha=0.1)    
+    plt.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
     plt.plot(timestamps, ask, color='red', linestyle="--", label='Ask')
 
     plt.plot(timestamps, bid, color='green', linestyle="--", label='Bid')
-    plt.fill_between(timestamps, price_bid, bid, color='green', alpha=0.1)
-    plt.plot(timestamps, price_bid, color='green', label='Market Price (Selling)')
+    plt.fill_between(timestamps, price_bid[intervals-1], bid, color='green', alpha=0.1)
     
-    plt.title("Price comparison for a trade volume of {} shares".format(volume))
+    for i in range (intervals):
+        volume_fraction = 1.*(i+1)/intervals
+        plt.plot(timestamps, price_bid[i], color='green', alpha=volume_fraction, label='Market Price (Selling {:1.2f})'.format(volume_fraction*volume))
+        plt.plot(timestamps, price_ask[i], color='red', alpha=volume_fraction, label='Market Price (Buying{:1.2f})'.format(volume_fraction*volume))
+        
+    title = "Price comparison for a trade volume of {} shares".format(volume)
+    if intervals > 1:
+        title = "{} (interval size: {})".format(title, 1.*volume/intervals)
+        
+    plt.title(title)
 
     plt.xticks(rotation=40)
     myFmt = mdates.DateFormatter('%H:%M')
@@ -180,7 +195,8 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
     
     plt.ylabel('Price')
     plt.xlabel(episode_windows[0].timestamp)
-    plt.legend(loc='best', prop={'size': 6})
+    if legend:
+        plt.legend(loc='best', prop={'size': 6})
     if ylim is not None:
         plt.ylim(ylim)
     
