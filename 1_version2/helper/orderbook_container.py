@@ -16,7 +16,9 @@ class OrderbookContainer(object):
         self.bids = bids
         self.asks = asks  
         self.kind = kind
-        # self.enriched = enriched
+        
+        self.asks.sort_index(inplace=True)
+        self.bids.sort_index(inplace=True, ascending=False)
 
     
     def copy(self):
@@ -27,10 +29,10 @@ class OrderbookContainer(object):
             # enriched=self.enriched,
             kind=self.kind)
     
-    def compare_with(self, other):
+    def compare_with(self, other):        
         bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
         asks_diff = self.asks.subtract(other.asks, axis=1, fill_value=0)
-
+        
         return OrderbookContainer(timestamp=other.timestamp,
                                   bids=bids_diff[bids_diff != 0].dropna(),
                                   asks=asks_diff[asks_diff != 0].dropna(),
