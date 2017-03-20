@@ -9,44 +9,25 @@ from .orderbook_container import OrderbookContainer
 import json
 from IPython.display import display
 
-
+import time
 
 def round_custombase(val, base):
     return round(val / base) * base
-
-def state_as_string(time_left, volume_left, orderbook=None):
-    assert isinstance(time_left, int), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
-    assert isinstance(volume_left, (int, float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
-    assert isinstance(orderbook, OrderbookContainer ) or not orderbook, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
-    state = [time_left, "{:1.2f}".format(volume_left)]
-    
-    if orderbook:
-        spread = orderbook.get_ask() - orderbook.get_bid()
-        # spread = round(spread, 1)
-        
-        if spread <= 1.:
-            spread_discrete = 0
-        elif spread > 2.:
-            spread_discrete = 2
-        else:
-            spread_discrete = 1
-        state.append(spread_discrete)
-    
-    return str(state)
         
 
 class QLearn:
 
-    def __init__(self, actions, vol_intervals, T=None, V=None, decisionfrequency=None):
+    def __init__(self, actions, vol_intervals, V=100, T=4, decisionfrequency=15, state_variables=['volume', 'time']):
         # assert isinstance(config, dict) or not config, "Config [if provided] must be of type 'dict', given: {}".format(type(config))
         # if not config:
         #     config = {}
         self.actions = actions
         self.actions_count = len(self.actions)
         self.vol_intervals = vol_intervals
-        self.T = T or 4
-        self.V = V or 100
-        self.decisionfrequency = decisionfrequency or 15
+        self.T = T
+        self.V = V
+        self.decisionfrequency = decisionfrequency
+        self.state_variables = state_variables
         self.created = datetime.datetime.now()
 
         self.volumes = np.linspace(0, 1, num=self.vol_intervals+1)[1:]
@@ -73,6 +54,7 @@ class QLearn:
                'T': self.T,
                'V': self.V,
                'decisionfrequency': self.decisionfrequency,
+               'state_variables': self.state_variables,
                'q': puffer_q,
                'n': puffer_n}
 
@@ -81,7 +63,7 @@ class QLearn:
 
         print("Saved: '{}'".format(outfile))
 
-    def load(self, infile):
+    def load(infile):
         if infile[-4:] != 'json':
             infile = '{}.json'.format(infile)
         
@@ -93,16 +75,79 @@ class QLearn:
             vol_intervals=data['vol_intervals'],
             T=data['T'],
             V=data['V'],
-            decisionfrequency=data['decisionfrequency']
+            decisionfrequency=data['decisionfrequency'],
+            state_variables=data['state_variables'] or ['volume', 'time']
             )
+        
         ql.q = data['q']
         ql.n = data['n']
-
         for elem in ql.q:
             ql.q[elem] = np.array(ql.q[elem])
             ql.n[elem] = np.array(ql.n[elem])
 
         return ql
+    
+    def merge_Qlearners(self, other, inplace=False):
+        # assert matching training settings
+        assert self.actions == other.actions
+        assert self.vol_intervals == other.vol_intervals
+        assert self.T == other.T
+        assert self.V == other.V
+        assert self.decisionfrequency == other.decisionfrequency
+        assert self.state_variables == other.state_variables
+        
+        if inplace:
+            ql = self
+        else:
+            ql = QLearn(
+                actions=self.actions,
+                vol_intervals=self.vol_intervals,
+                T=self.T,
+                V=self.V,
+                decisionfrequency=self.decisionfrequency,
+                state_variables=self.state_variables
+            )
+        
+        for state in self.n:
+            new_n = self.n[state] + other.n[state]
+            ql.q[state] = (self.q[state] * self.n[state] + other.q[state] * other.n[state]) / new_n
+            ql.n[state] = new_n
+        
+        if not inplace:
+            return ql
+    
+    def state_as_string(self, time_left, volume_left, orderbook=None):   
+        assert isinstance(time_left, int), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
+        assert isinstance(volume_left, (int, float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
+        assert isinstance(orderbook, OrderbookContainer ) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
+
+        allowed_variable_set = ['volume', 'time', 'spread']
+        assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}".format(allowed_variable_set)
+
+        state = []
+        for var in self.state_variables:
+            if var == 'volume':
+                state.append("{:1.2f}".format(volume_left))
+            elif var == 'time':
+                state.append(time_left)
+            elif var == 'spread':
+                if orderbook is None:
+                    state.append(0)
+                    continue
+                
+                spread = orderbook.get_ask() - orderbook.get_bid()
+
+                if spread <= 1.:
+                    spread_discrete = 0
+                elif spread > 2.:
+                    spread_discrete = 2
+                else:
+                    spread_discrete = 1
+                state.append(spread_discrete)
+            else:
+                raise NotImplemented
+
+        return str(state)
 
     def get_action_index(self, action):
         action_idx = None
@@ -203,7 +248,7 @@ class QLearn:
         for t in timesteps:
             for v in self.volumes:
                 # state = '[{}, {:1.1f}]'.format(t, v)
-                state = state_as_string(time_left=t, volume_left=v)
+                state = self.state_as_string(time_left=t, volume_left=v)
                 
                 xpos.append(t-x_offset)
                 ypos.append(v-y_offset)
