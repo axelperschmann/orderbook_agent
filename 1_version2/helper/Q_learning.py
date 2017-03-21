@@ -1,5 +1,7 @@
 import random
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import pickle
@@ -219,6 +221,53 @@ class QLearn:
         
         
         return self.actions[i]
+    
+    def headmap_Q(self, hue='Q', epoch=None, outfile=None, outformat='pdf'):
+        
+        assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
+        
+        df = pd.DataFrame([], columns=self.state_variables)
+        for t in range(1, self.T+1):
+            for v in self.volumes[::-1]:
+                state = self.state_as_string(time_left=t,
+                                        volume_left=v)
+                q = self.getQ(state)
+                if not np.all([math.isnan(val) for val in q]):
+                    action = self.actions[np.nanargmin(q)]
+                    df_tmp = pd.DataFrame({'time': int(t),
+                                           'volume': v,
+                                           'q': np.nanmin(q),
+                                           'n': self.getN(state, action),
+                                           'action': action}, index=["{},{:1.2f}".format(t, v)])
+                    df = pd.concat([df, df_tmp])
+        df['time'] = df.time.astype(int)
+
+        fig, axs = plt.subplots(ncols=2, figsize=(16,5))
+        plt.suptitle="X"
+        sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.2f",
+                    ax=axs[0], vmin=-0.4, vmax=1.0)
+        sns.heatmap(df.pivot('time', 'volume', 'q'), annot=True, fmt="1.2f", ax=axs[1])
+        title = "Q function (T:{}, V:{})".format(self.T*self.decisionfrequency, self.V)
+        if epoch is not None:
+            title = "{}, epochs:{}".format(title, epoch+1)
+            
+        for ax in axs:
+            ax.invert_xaxis()
+            ax.set_ylabel("time remaining [periods]")
+            ax.set_xlabel("trade volume remaining [%]")
+            # ax.set_zlabel("trade volume remaining [%]")
+        axs[0].set_title('Optimal action')
+        axs[1].set_title('Optimal Q value')
+        
+        if outfile:
+            if outfile[len(outformat):] != outformat:
+                outfile = "{}.{}".format(outfile, outformat)
+            plt.savefig(outfile, format=outformat)
+        else:
+            plt.show()
+        plt.close()
+
+        
 
     def plot_Q(self, z_represents='action', epoch=None, outfile=None, outformat='pdf', verbose=False):
         assert isinstance(z_represents, str) and z_represents in ['action', 'Q']
