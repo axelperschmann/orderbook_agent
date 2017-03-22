@@ -11,7 +11,7 @@ action_min=-0.4
 action_max=1.0
 action_count=15
 
-folder='/home/axel/notebooks/orderbook_agent/1_version2/Runs/experiments'
+folder='/home/axel/notebooks/orderbook_agent/orderbook_agent/Runs/experiments'
 plotQ=True
 state_variables=['volume','time', 'spread']
 
