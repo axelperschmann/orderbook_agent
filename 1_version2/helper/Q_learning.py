@@ -222,7 +222,7 @@ class QLearn:
         
         return self.actions[i]
     
-    def headmap_Q(self, hue='Q', epoch=None, outfile=None, outformat='pdf'):
+    def heatmap_Q(self, hue='Q', epoch=None, outfile=None, outformat='pdf'):
         
         assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
         
