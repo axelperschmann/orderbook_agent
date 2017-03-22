@@ -19,7 +19,7 @@ def round_custombase(val, base):
 
 class QLearn:
 
-    def __init__(self, actions, vol_intervals, V=100, T=4, decisionfrequency=15, state_variables=['volume', 'time']):
+    def __init__(self, actions, vol_intervals, V=100, T=4, period_length=15, state_variables=['volume', 'time']):
         # assert isinstance(config, dict) or not config, "Config [if provided] must be of type 'dict', given: {}".format(type(config))
         # if not config:
         #     config = {}
@@ -28,7 +28,7 @@ class QLearn:
         self.vol_intervals = vol_intervals
         self.T = T
         self.V = V
-        self.decisionfrequency = decisionfrequency
+        self.period_length = period_length
         self.state_variables = state_variables
         self.created = datetime.datetime.now()
 
@@ -55,7 +55,7 @@ class QLearn:
                'vol_intervals': self.vol_intervals,
                'T': self.T,
                'V': self.V,
-               'decisionfrequency': self.decisionfrequency,
+               'period_length': self.period_length,
                'state_variables': self.state_variables,
                'q': puffer_q,
                'n': puffer_n}
@@ -77,7 +77,7 @@ class QLearn:
             vol_intervals=data['vol_intervals'],
             T=data['T'],
             V=data['V'],
-            decisionfrequency=data['decisionfrequency'],
+            period_length=data['period_length'],
             state_variables=data['state_variables'] or ['volume', 'time']
             )
         
@@ -95,7 +95,7 @@ class QLearn:
         assert self.vol_intervals == other.vol_intervals
         assert self.T == other.T
         assert self.V == other.V
-        assert self.decisionfrequency == other.decisionfrequency
+        assert self.period_length == other.period_length
         assert self.state_variables == other.state_variables
         
         if inplace:
@@ -106,7 +106,7 @@ class QLearn:
                 vol_intervals=self.vol_intervals,
                 T=self.T,
                 V=self.V,
-                decisionfrequency=self.decisionfrequency,
+                period_length=self.period_length,
                 state_variables=self.state_variables
             )
         
@@ -247,7 +247,7 @@ class QLearn:
         sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.2f",
                     ax=axs[0], vmin=-0.4, vmax=1.0)
         sns.heatmap(df.pivot('time', 'volume', 'q'), annot=True, fmt="1.2f", ax=axs[1])
-        title = "Q function (T:{}, V:{})".format(self.T*self.decisionfrequency, self.V)
+        title = "Q function (T:{}, V:{})".format(self.T*self.period_length, self.V)
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
             
@@ -337,7 +337,7 @@ class QLearn:
             axis.set_xticks(self.volumes)
             plt.tight_layout()       
 
-        title = "Q function (T:{}, V:{})".format(self.T*self.decisionfrequency, self.V)
+        title = "Q function (T:{}, V:{})".format(self.T*self.period_length, self.V)
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
         fig.suptitle(title)

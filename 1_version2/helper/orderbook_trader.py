@@ -10,20 +10,20 @@ from helper.orderbook_container import OrderbookContainer
 
 class OrderbookTradingSimulator(object):
     
-    def __init__(self, orderbooks, volume, tradingperiods, *, decisionfrequency=1):
+    def __init__(self, orderbooks, volume, tradingperiods, *, period_length=1):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
-        assert len(orderbooks) == tradingperiods*decisionfrequency, "Expected len(orderbooks) to equal tradingperiods*decisionfrequency, but: {} != {}*{}".format(len(orderbooks), tradingperiods, decisionfrequency)
+        assert len(orderbooks) == tradingperiods*period_length, "Expected len(orderbooks) to equal tradingperiods*period_length, but: {} != {}*{}".format(len(orderbooks), tradingperiods, period_length)
         assert isinstance(volume, (float, int)) and volume != 0,  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(initial_volume))
         assert isinstance(tradingperiods, int) and tradingperiods>0, "Parameter 'tradingperiods' must be 'int' and larger than 0, given: {}".format(type(timespan))
-        assert isinstance(decisionfrequency, int) and decisionfrequency > 0, "Parameter 'decisionfrequency' must be 'int', given: {}".format(type(decisionfrequency))
-        # tradingperiods * decisionfrequency: trading period
+        assert isinstance(period_length, int) and period_length > 0, "Parameter 'period_length' must be 'int', given: {}".format(type(period_length))
+        # tradingperiods * period_length: trading period
 
         self.orderbooks = orderbooks
         self.masterbook = orderbooks[0].copy()
 
         self.t = 0
-        self.decisionfrequency = decisionfrequency
-        self.timespan = tradingperiods * decisionfrequency
+        self.period_length = period_length
+        self.timespan = tradingperiods * period_length
         self.volume = volume
 
         if volume > 0:
@@ -42,35 +42,6 @@ class OrderbookTradingSimulator(object):
 
         self.summary = {'amount': 0, 'cashflow':0, 'remaining': volume, 'cost':0}
 
-    #def __merge_negative_shares(self, book, max_iterations=1000):
-    #    """
-    #    Orderbook adjustment can lead to negative share numbers.
-    #    Countermeasurement:
-    #    Iteratively merge price_levels showing a negative share
-    #    number with it's closest neighbour at that time.
-    #    """
-    #
-    #    drop_idx = book[book==0].dropna().index
-    #    book.drop(drop_idx, inplace=True)
-    #
-    #    loop_counter = 0
-    #    while loop_counter < max_iterations:
-    #        pricelevels_with_negative_shares = book[book<=0].dropna()
-    #        if len(pricelevels_with_negative_shares) == 0:
-    #            # Done, nothing to fix here
-    #            break
-    #
-    #        # get first candidate with negative shares and it's closest neighbour
-    #        price_level = pricelevels_with_negative_shares.index[0]
-    #        closest_neighbour = book.iloc[abs(book.index-price_level).argsort()[1]]
-    #
-    #        # merge candidate and neighbour, then drop candidate
-    #        book.loc[closest_neighbour.name] += pricelevels_with_negative_shares.loc[price_level]
-    #        book.drop(price_level, inplace=True)
-    #        
-    #        loop_counter  += 1
-    #    
-    #    return book
 
     def __subtract_lastTrade_fromMaster(self, last_trade):
         if len(last_trade) > 0:
@@ -131,7 +102,7 @@ class OrderbookTradingSimulator(object):
     def trade(self, limit=None, agression_factor=None, *, verbose=False, extrainfo={}): # orderbooks, 
         # assert isinstance(orderbooks, list)
         # assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
-        # assert len(orderbooks)>=self.decisionfrequency
+        # assert len(orderbooks)>=self.period_length
         assert (isinstance(limit, (float, int)) and limit > 0) or not limit
         assert (isinstance(agression_factor, (float, int)) and not limit) or not agression_factor
         assert isinstance(verbose, bool)
@@ -142,7 +113,7 @@ class OrderbookTradingSimulator(object):
                                   'ASK': None,
                                   'SPREAD': None,
                                   'CENTER': None,
-                                  'T': self.decisionfrequency,
+                                  'T': self.period_length,
                                   'VOLUME': self.volume,
                                   'volume_traded': 0,
                                   'LIMIT': limit,
@@ -166,7 +137,7 @@ class OrderbookTradingSimulator(object):
         if len(self.history) > 0:
             assert(abs(self.history.volume_traded.sum() + self.volume - self.history.VOLUME.values[0]) < EPSILON)
         
-        for t in range(self.decisionfrequency):
+        for t in range(self.period_length):
             if self.volume==0:
                 # Do nothing!
                 return info  #ob
@@ -227,14 +198,11 @@ class OrderbookTradingSimulator(object):
                 # if verbose:
                 #     print("No shares left after t={}. Done!".format(self.t-1))
                 break
-            
                 
         if info.volume_traded.values[0] != 0:
             info.avg = round(abs((info.cashflow / info.volume_traded)), 5)
 
         self.history = self.history.append(info, ignore_index=False)
-        
-        
         
         if info.volume_traded.values[0] != 0:
             if info.VOLUME.values[0] > 0:
@@ -242,18 +210,12 @@ class OrderbookTradingSimulator(object):
             elif info.VOLUME.values[0] < 0:
                 initial_bestprice = self.history.BID.values[0]
 
-            # compute costs
-            # self.history.loc[timestamp, 'cost'] = - 1. * (self.history.cashflow[-1] +
-            #                                               self.history.volume_traded.values[-1] * initial_bestprice)
             self.history.loc[timestamp, 'cost'] = self.history.volume_traded.values[-1] * (self.history.avg[-1] - self.history.CENTER.values[0]) / self.history.CENTER.values[0]
 
             self.summary['amount'] += info.volume_traded.values[0]
             self.summary['cashflow'] += info.cashflow.values[0]
             self.summary['remaining'] = self.volume
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
-
-            # self.history.loc[timestamp, 'cost_avg'] = np.sign(info.volume_traded.values[0]) * (self.history.avg[-1] - 
-            #                                                                                    initial_bestprice) 
             
         if verbose:
             if info.volume_traded.values[0] != 0:
