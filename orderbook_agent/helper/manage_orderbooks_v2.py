@@ -264,15 +264,18 @@ def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=Non
     return data
 
 
-def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True, range_factor=None
-, pricelevel_precision=2, verbose=True):
+def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True,
+    range_factor=None, range_volume=None, pricelevel_precision=2, verbose=True):
     assert len(datafiles)>0
     assert isinstance(currency_pair, str)
     assert isinstance(outfile, str)
     assert isinstance(overwrite, bool)
     assert isinstance(range_factor, (float, int)) or not range_factor
     if range_factor:
-        assert range_factor > 1, "range_factor must be larger than 1, not '{}'".format(range_factor)
+        assert range_factor > 1, "'range_factor' must be larger than 1, not '{}'".format(range_factor)
+    assert isinstance(range_volume, (float, int)) or not range_volume
+    if range_volume:
+        assert range_volume > 0, "'range_volume' must be a positive 'int' or 'float', given: '{}', {}".format(range_volume, type(range_volume))
     assert isinstance(pricelevel_precision, int) and pricelevel_precision>=0
     assert isinstance(verbose, bool)
     
@@ -334,6 +337,19 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                 # limited price range relative to center_log or norm_Price
                 bids = bids[bids.index >= center / range_factor].dropna()
                 asks = asks[asks.index <= center * range_factor].dropna()
+
+            if range_volume:
+                # limit orderbook depth, such that both asks and bids contain
+                #  a volume greater than given range_volume.
+                asks['accAmount'] = asks.cumsum()
+                asks_level = asks[asks['accAmount'] > range_volume].index[0]
+                asks = asks[asks.index<=asks_level]
+                asks.drop('accAmount', axis=1, inplace=True)
+
+                bids['accAmount'] = bids.cumsum()
+                bids_level = bids[bids['accAmount'] > range_volume].index[0]
+                bids = bids[bids.index>=bids_level]
+                bids.drop('accAmount', axis=1, inplace=True)
                 
             # must convert floats to unicode to prevent precision loss when
             # executing DataFrame.to_dict() :
