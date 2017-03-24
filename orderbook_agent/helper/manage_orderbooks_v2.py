@@ -309,12 +309,14 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
             bids['Price'] = pd.to_numeric(bids['Price']).round(decimals=pricelevel_precision)
             bids = bids.groupby('Price', as_index=False).sum()[::-1]
             bids = bids.set_index(bids.Price.values).drop("Price", axis=1)
+            bids.sort_index(inplace=True, ascending=False)
             
             # extract all ask orders
             asks = pd.DataFrame(df['asks'], columns=['Price', 'Amount'])
             asks['Price'] = pd.to_numeric(asks['Price']).round(decimals=pricelevel_precision)
             asks = asks.groupby('Price', as_index=False).sum()
             asks = asks.set_index(asks.Price.values).drop("Price", axis=1)
+            asks.sort_index(inplace=True)
             
             if bids.index.values[0] == asks.index.values[0]:
                 # Due to rounding issues (parameter pricelevel_precision) it can happen that ask and bid

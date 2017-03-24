@@ -5,7 +5,22 @@ import matplotlib.pyplot as plt
 import warnings
 from IPython.display import display
 
+from functools import wraps
+from time import time
+
 class OrderbookContainer(object):
+
+    def timing(f):
+        @wraps(f)
+        def wrap(*args, **kw):
+            ts = time()
+            result = f(*args, **kw)
+            te = time()
+            print('func:%r  took: %2.4f sec' % \
+              (f.__name__, te-ts))
+            return result
+        return wrap
+
     def __init__(self, timestamp, bids, asks, *, kind='orderbook'):  #enriched=False, 
         assert isinstance(timestamp, str), "Parameter 'timestamp' is '{}', type={}".format(timestamp, type(timestamp))
         assert isinstance(bids, pd.DataFrame)  # and len(bids)>0
@@ -17,9 +32,11 @@ class OrderbookContainer(object):
         self.asks = asks  
         self.kind = kind
         
-        self.asks.sort_index(inplace=True)
-        self.bids.sort_index(inplace=True, ascending=False)
-
+        if kind == 'orderbook':
+            # sorting is computationally expensive. Avoid it when working on 'diff'-book
+            self.asks.sort_index(inplace=True)
+            self.bids.sort_index(inplace=True, ascending=False)
+    
     
     def copy(self):
         return OrderbookContainer(
@@ -32,8 +49,8 @@ class OrderbookContainer(object):
     def compare_with(self, other):        
         bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
         asks_diff = self.asks.subtract(other.asks, axis=1, fill_value=0)
-        
-        return OrderbookContainer(timestamp=other.timestamp,
+
+        return OrderbookContainer(timestamp=self.timestamp,
                                   bids=bids_diff[bids_diff != 0].dropna(),
                                   asks=asks_diff[asks_diff != 0].dropna(),
                                   kind='diff')
