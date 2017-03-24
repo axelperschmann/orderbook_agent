@@ -171,7 +171,7 @@ class OrderbookTradingSimulator(object):
             if self.volume==0:
                 # Do nothing!
 
-                return info  #ob
+                return self.summary
             
             self.adjust_masterbook()
             ob = self.masterbook
@@ -254,7 +254,7 @@ class OrderbookTradingSimulator(object):
 
 
                 print("t={}: Traded {}, {:.4f} shares left".format(self.t-1, traded, self.volume))
-
+        
         return self.summary
         
     # @timing
@@ -286,7 +286,7 @@ class OrderbookTradingSimulator(object):
             # fast! buy everything until limit
             orders_sub = orders.iloc[:fast_items,:]
             info['trade_summary'] = orders_sub
-            info['cashflow'] = (orders_sub.Amount * orders_sub.index).sum()
+            info['cashflow'] = (orders_sub.Amount * orders_sub.index).sum() * self.order_direction
             order_vol = orders_sub.Amount.sum()
             info['volume'] -= order_vol * self.order_direction
             volume += order_vol * self.order_direction
