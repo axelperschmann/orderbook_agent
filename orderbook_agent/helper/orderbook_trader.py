@@ -53,17 +53,17 @@ class OrderbookTradingSimulator(object):
         
     def reset(self, custom_starttime=None, custom_startvolume=None):
         assert (isinstance(custom_starttime, int) and custom_starttime >= 0 and custom_starttime*self.period_length < self.timespan) or custom_starttime is None, "Parameter 'custom_starttime' [if provided] must be an 'int' and between 0 and T-1"
-        assert isinstance(custom_startvolume, (float, int)) or custom_startvolume is None, "Parameter 'custom_startvolume' [if provided] must be 'float' or 'int'"
+        assert (isinstance(custom_startvolume, (float, int)) and custom_startvolume != 0) or custom_startvolume is None, "Parameter 'custom_startvolume' [if provided] must be 'float' or 'int'"
 
         self.t = 0
         if custom_starttime is not None:
             self.t = custom_starttime*self.period_length
-            print("new t: {}".format(self.t))
+            #print("new t: {}".format(self.t))
 
         self.volume =  self.initial_volume
         if custom_startvolume is not None:
             self.volume = custom_startvolume
-            print("new vol: {}".format(self.volume))
+            #print("new vol: {}".format(self.volume))
 
         self.masterbook = self.masterbook_initial.copy()
 
@@ -156,7 +156,8 @@ class OrderbookTradingSimulator(object):
 
 
         if self.summary['done'] or self.volume == 0:
-            print("already done, nothing to do here!")
+            if verbose:
+                print("already done, nothing to do here!")
             return self.summary
 
         if len(extrainfo) > 0:
@@ -169,6 +170,7 @@ class OrderbookTradingSimulator(object):
         for t in range(self.period_length):
             if self.volume==0:
                 # Do nothing!
+
                 return info  #ob
             
             self.adjust_masterbook()
