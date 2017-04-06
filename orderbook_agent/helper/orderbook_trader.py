@@ -58,12 +58,12 @@ class OrderbookTradingSimulator(object):
         self.t = 0
         if custom_starttime is not None:
             self.t = custom_starttime*self.period_length
-            #print("new t: {}".format(self.t))
+            # print("new t: {}".format(self.t))
 
         self.volume =  self.initial_volume
         if custom_startvolume is not None:
             self.volume = custom_startvolume
-            #print("new vol: {}".format(self.volume))
+            # print("new vol: {}".format(self.volume))
 
         self.masterbook = self.masterbook_initial.copy()
 
@@ -127,6 +127,7 @@ class OrderbookTradingSimulator(object):
 
         self.masterbook.timestamp = self.diffs[self.t-1].timestamp
 
+
     def trade(self, limit=None, agression_factor=None, *, verbose=False, extrainfo={}): # orderbooks, 
         # assert isinstance(orderbooks, list)
         # assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
@@ -135,7 +136,7 @@ class OrderbookTradingSimulator(object):
         assert (isinstance(agression_factor, (float, int)) and not limit) or not agression_factor
         assert isinstance(verbose, bool)
         assert isinstance(extrainfo, dict)
-
+        
         timestamp = self.timestamps[self.t]
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
