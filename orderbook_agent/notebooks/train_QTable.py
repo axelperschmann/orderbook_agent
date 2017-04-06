@@ -11,7 +11,7 @@ import sys
 sys.path.append('..')
 from helper.orderbook_trader import OrderbookTradingSimulator
 from helper.Q_learning import QLearn, round_custombase
-from helper.manage_orderbooks_v2 import OrderbookEpisodesGenerator
+from helper.manage_orderbooks import OrderbookEpisodesGenerator
 from agents.QTable_Agent import QTable_Agent
 from datetime import datetime
 import fire
