@@ -134,7 +134,7 @@ def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
     plt.close()
 
 
-def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf', intervals=1, legend=True):
+def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf', intervals=1, legend=True, limits=None):
     assert isinstance(episode_windows, list)
     assert type(episode_windows[0]).__name__ == "OrderbookContainer"
     assert isinstance(volume, (int, float))
@@ -157,9 +157,18 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
         price_bid[i] = []
 
     timestamps = []
-    
+
+    if limits is not None:
+        period_length = len(episode_windows) / len(limits)
+        limit_idx = 0
+        limits_y = []
+
     fig, ax = plt.subplots(figsize=figsize)
-    for ob in episode_windows:
+    for o, ob in enumerate(episode_windows):
+        if (limits is not None) and (o%period_length == 0):
+            limits_y = limits_y + list(np.repeat(ob.get_ask() * (1. + (limits[limit_idx]/100.)), period_length))
+            limit_idx += 1
+
         center.append(ob.get_center())
         ask.append(ob.get_ask())
         bid.append(ob.get_bid())
@@ -170,7 +179,9 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
             price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
         timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
 
-        
+    if limits is not None:
+        plt.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
+    
     plt.plot(timestamps, center, color='black', label='Center')
     plt.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
     plt.plot(timestamps, ask, color='red', linestyle="--", label='Ask')
