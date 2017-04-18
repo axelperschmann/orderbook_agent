@@ -11,7 +11,7 @@ import sys
 sys.path.append('..')
 from helper.orderbook_trader import OrderbookTradingSimulator
 from helper.Q_learning import QLearn, round_custombase
-from helper.manage_orderbooks_v2 import OrderbookEpisodesGenerator
+from helper.manage_orderbooks import OrderbookEpisodesGenerator
 from datetime import datetime
 
 
@@ -68,6 +68,7 @@ def run_Q(V, H, T, ql, episode_windows, actions):
                 # theoreticall done
                 limit == None
             ots.trade(limit = limit, extrainfo={'ACTION':action})
+        
         costs.loc[index, 'Learned'] = ots.history.cost.sum()
         
         # for a in actions:
