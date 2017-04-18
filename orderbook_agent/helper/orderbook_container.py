@@ -74,7 +74,7 @@ class OrderbookContainer(object):
             orders = self.bids
             orderdirection = -1
             # volume = abs(volume)
-            
+        
         assert volume < orders.Amount.sum(), "Can't handle trade. Orderbookvolume exceeded {} vs {}".format(orders.Amount.sum(), volume)
             
         for row in orders.itertuples():

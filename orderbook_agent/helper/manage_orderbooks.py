@@ -145,6 +145,7 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
     assert isinstance(outformat, str)
     assert (isinstance(intervals, int) and intervals > 0) or intervals is None
     assert isinstance(legend, bool)
+    assert isinstance(limits, list) or limits is None
     volume = abs(volume)
     
     center = []

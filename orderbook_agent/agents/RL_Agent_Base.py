@@ -42,10 +42,10 @@ class RLAgent_Base:
     def load(infile):
         raise NotImplementedError
     
-    def generate_state(self, time_left, volume_left, orderbook=None):   
+    def generate_state(self, time_left, volume_left, orderbook=None):  
         assert isinstance(time_left, (int, float)), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
         assert isinstance(volume_left, (int, float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
-        assert isinstance(orderbook, OrderbookContainer ) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
+        assert (type(orderbook).__name__ == OrderbookContainer.__name__) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
 
         allowed_variable_set = ['volume', 'time', 'spread']
         assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}".format(allowed_variable_set)
@@ -108,8 +108,44 @@ class RLAgent_Base:
         ''' this is only a skeleton '''
         raise NotImplementedError
 
-    def evaluate(self, testdata, verbose=False):
-        costs = pd.DataFrame([])
+    def plot_evaluation_costs(self, experiments, name=None, ylim=None, showfliers=False, hline=None):
+        assert isinstance(hline, str) or hline is None
+        
+        experiments.plot.box(showmeans=True, color={'medians':'green'}, figsize=(12, 8), showfliers=showfliers)
+
+        plt.axvline(2.5, color='black')
+        plt.axvline(3.5, color='black')
+        plt.axhline(0, color='black')
+        
+        if hline is not None:
+            if hline in experiments.columns:
+                plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=2, linestyle='--', label='min mean')
+                plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=2, linestyle='--', label='min median')
+            else:
+                print("Could not find experiment '{}'".format(hline))
+
+        title = "{} samples  \n{} - {}".format(len(experiments), experiments.index[0], experiments.index[-1])
+        if name is not None:
+            title = "{}: {}".format(name, title)
+        print(title)
+        #plt.suptitle(title)
+        plt.xlabel("Strategies")
+        plt.ylabel("Occured costs")
+        # plt.savefig("boxplot_train.pdf")
+        plt.xticks(rotation=70)
+        if ylim is not None:
+            plt.ylim(ylim)    
+        plt.legend(loc='best')
+        
+        plt.show()
+
+    def evaluate(self, testdata, evaluate_actions=[], costs=None, name=None, which_min='first', verbose=False):
+        name = name or self.agent_name
+        
+        if costs is not None:
+            costs = costs
+        else:
+            costs = pd.DataFrame([])
 
         for w, window in tqdm(enumerate(testdata)):
             index = window[0].timestamp
@@ -122,64 +158,72 @@ class RLAgent_Base:
                 timepoint = t*self.period_length
                 
                 ob_now = window[timepoint]
-
+                # self.interpolate_vol = True
                 volume = float(ots.volume)
-                if hasattr(self, 'volumes_base'):
+                if hasattr(self, 'volumes_base') and not self.interpolate_vol:
                     # discretize volume through rounding (needed for QLookupTable)
                     volume = self.round_custombase(volume, non_zero=True)
     
                 state = self.generate_state(time_left=time_left, 
                                             volume_left=volume,
                                             orderbook=ob_now)
-                action, action_idx = self.get_action(state, exploration=0)
+
+                action, action_idx = self.get_action(state, exploration=0, which_min=which_min)
                 limit = ob_now.get_ask() * (1. + (action/100.))
                
-                ots.trade(limit = limit, extrainfo={'ACTION':action})
+                # ots.trade(limit = limit, extrainfo={'ACTION':action})
+                ots.trade(agression_factor=action, extrainfo={'ACTION':action})
 
                 if ots.summary['done']:
                     break
+
             if verbose:
                 display(ots.history)
-            costs.loc[index, self.agent_name] = ots.history.cost.sum()
+            costs.loc[index, name] = ots.history.cost.sum()
+
+            for action in evaluate_actions:
+                ots.reset()
+                limit = window[0].get_ask() * (1. + (action/100.))
+
+
+                for t in range(0, self.T):
+                    ots.trade(limit = limit, extrainfo={'ACTION':action})
+
+                    if ots.summary['done']:
+                        break
+                costs.loc[index, action] = ots.history.cost.sum()
+                # costs.loc[index, "ask*{}".format(1+(action/100.))] = ots.history.cost.sum()
+
+            
         return costs
 
-    def sample_from_Q(self, vol_intervals):
-        assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
-
-        df = pd.DataFrame([], columns=self.state_variables)
-        for t in range(1, self.T+1):
-            for v in np.linspace(0, self.V, num=vol_intervals+1)[1:]:
-                state = self.generate_state(time_left=t,
-                                        volume_left=v)
-
-                q = self.predict(state)
-                action = self.actions[np.nanargmin(q)]
-
-                if (t, v) in [(1,100), (2,20), (1,10), (4,20)]:
-                    print("t{}, v{}  -  action: #{}={:1.1f}".format(t,v, np.nanargmin(q), action))
-                    print(["{:1.4f}".format(val) for val in q])
-                
-                df_tmp = pd.DataFrame({'time': t,
-                                       'state': str(state),
-                                       'volume': v,
-                                       'q': np.nanmin(q),
-                                       'action': action}, index=["{:1.2f},{}".format(v, t)])
-                df = pd.concat([df, df_tmp])
-        return df
+    def sample_from_Q(self, vol_intervals, which_min):
+        ''' this is only a skeleton '''
+        raise NotImplementedE
 
 
     
-    def heatmap_Q(self, hue='Q', vol_intervals=10, epoch=None, outfile=None, outformat='pdf', show_traces=False):
+    def heatmap_Q(self, hue='Q', vol_intervals=10, epoch=None, which_min='first', outfile=None, outformat='pdf', show_traces=False, show_minima_count=False):
         assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
         
-        df = self.sample_from_Q(vol_intervals=vol_intervals)
-        
-        fig, axs = plt.subplots(ncols=2, figsize=(16,5))
-        plt.suptitle="X"
+        if show_minima_count:
+            fig, axs = plt.subplots(ncols=3, figsize=(16,4))
+        else:
+            fig, axs = plt.subplots(ncols=2, figsize=(16,5))
+
+        df = self.sample_from_Q(vol_intervals=vol_intervals, which_min=which_min)
         
         sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.2f",
                     ax=axs[0], vmin=-0.4, vmax=1.0)
+        axs[0].set_title('Optimal action')
+        
         sns.heatmap(df.pivot('time', 'volume', 'q'), annot=True, fmt="1.2f", ax=axs[1])
+        axs[1].set_title('Optimal Q value')
+        
+        if show_minima_count:
+            sns.heatmap(df.pivot('time', 'volume', 'minima_count'), annot=True, ax=axs[2])
+            axs[2].set_title('Minima Count')
+        
         title = "Q function (T:{}, V:{})".format(self.T*self.period_length, self.V)
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
@@ -198,8 +242,9 @@ class RLAgent_Base:
             ax.set_ylabel("time remaining [periods]")
             ax.set_xlabel("trade volume remaining [%]")
             # ax.set_zlabel("trade volume remaining [%]")
-        axs[0].set_title('Optimal action')
-        axs[1].set_title('Optimal Q value')
+        
+        
+        
         
         if outfile:
             if outfile[len(outformat):] != outformat:
