@@ -17,7 +17,9 @@ from datetime import datetime
 import fire
 from IPython.display import display
 
-def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions, outputfolder, verbose=True, experiment_name=None, state_variables=['volume', 'time'], plotQ=False, outputfile_model=None):
+def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions,
+                     verbose=True, state_variables=['volume', 'time'], outputfile=None,
+                     normalized=True, interpolate_vol=False):
 
     brain = QTable_Agent(
         actions=actions,
@@ -25,15 +27,10 @@ def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions, ou
         V=V, T=T,
         period_length=period_length,
         vol_intervals=vol_intervals,
-        normalized=True
+        normalized=normalized,
+        interpolate_vol=interpolate_vol
     )
     print(brain)
-    
-    if outputfile_model is not None:
-        filename_qtable = outputfile_model
-    else:
-        filename_qtable = os.path.join(outputfolder, experiment_name, 'model', experiment_name)
-    filename_graphs = os.path.join(outputfolder, experiment_name, 'graphs', experiment_name)
 
     for tt in tqdm(range(T)[::-1]):
         
@@ -58,7 +55,7 @@ def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions, ou
                 if tt == 0 and vol != V:
                     # at t=0 we always have 100% of the volume left.
                     break
-
+                
                 state = brain.generate_state(time_left=time_left, 
                                              volume_left=vol,
                                              orderbook=ob_now)
@@ -68,15 +65,15 @@ def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions, ou
                     
                     limit = ask * (1. + (a/100.))
 
-                    ots.trade(limit = limit)  # agression_factor=a)
+                    ots.trade(agression_factor=a)  # limit = limit)  # agression_factor=a)
                     
                     volume_left = ots.volume
-                    volume_left_rounded = round_custombase(volume_left, base=brain.volumes_base)
+                    volume_left = round_custombase(volume_left, base=brain.volumes_base)
 
                     volume_traded = ots.history.volume_traded.values[-1]
                     volume_traded_rounded = round_custombase(volume_traded, base=brain.volumes_base)
 
-                    assert volume_left_rounded + volume_traded_rounded - vol*V <= 1.e-8, "{} {} {} {}".format(volume_left_rounded, volume_traded_rounded, vol, V)
+                    assert volume_left + volume_traded_rounded - vol*V <= 1.e-8, "{} {} {} {}".format(volume_left, volume_traded_rounded, vol, V)
 
                     avg = ots.history.avg[-1]
 
@@ -84,61 +81,64 @@ def optimal_strategy(traingdata, V, T, period_length, vol_intervals, actions, ou
                     cost = volume_traded_rounded * (avg - initial_center) / initial_center
                     
                     new_state = brain.generate_state(time_left=time_left-1,
-                                                     volume_left=volume_left_rounded,
+                                                     volume_left=volume_left, #_rounded,
                                                      orderbook=ob_next)
+                    # print("new_state", new_state)
 
                     # print("{}   {:1.2f}, {:1.4f}   {}".format(state, a, cost, new_state))
                     
                     brain.learn(state=state, action=a, cost=cost, new_state=new_state)
 
             if w%5==0 or w==len(traingdata):
-                if plotQ:
-                    # brain.plot_Q(outfile="{}_{}_action".format(filename_graphs, T-tt), epoch=w,
-                    #           z_represents='action', verbose=verbose)
-                    # brain.plot_Q(outfile="{}_{}_Q".format(filename_graphs, T-tt), epoch=w, 
-                    #           z_represents='Q', verbose=verbose)
-                    pass
-
-                brain.save(outfile=filename_qtable)
+                # save model to disk
+                brain.save(outfile=outputfile)
             
     return brain
 
-def run(experiment_name, inputfile, volume, volume_intervals, decision_points, periodlength,
-        action_min=-0.4, action_max=1.0, action_count=15, folder='experiments', plotQ=False, state_variables=['volume', 'time']):
-    
+def run(inputfile, volume, volume_intervals, decision_points, period_length,
+        action_min=-0.4, action_max=1.0, action_count=15, folder='experiments',
+        state_variables=['volume', 'time'], outputfile_model=None):
+
     actions = list(np.linspace(action_min, action_max, num=action_count))
-    print("V={}, T={}, P={}".format(volume, decision_points, periodlength))
+    print("V={}, T={}, P={}".format(volume, decision_points, period_length))
     print("Actions: ", ", ".join(["{:1.2f}".format(a) for a in actions]))
     
-    episodes_train = OrderbookEpisodesGenerator(filename=inputfile,
-                                                episode_length=decision_points*periodlength)
+    inputfile_extension = inputfile.split(".")[-1]
+    if inputfile_extension == "dict":
+        episodes_train = OrderbookEpisodesGenerator(filename=inputfile,
+                                                    episode_length=decision_points*period_length)
+    elif inputfile_extension == "p":
+        # saves a lot of time!
+        episodes_train = pickle.load( open( inputfile, "rb" ) )
     print("Length of episodes_train: {}".format(len(episodes_train)))
     
-    ql = optimal_strategy(traingdata=episodes_train, V=volume, T=decision_points,
-                          period_length=periodlength, vol_intervals=volume_intervals,
-                          actions=actions, outputfolder=folder, experiment_name=experiment_name,
-                          state_variables=state_variables, plotQ=plotQ)
+    ql = optimal_strategy(traingdata=episodes_train[:1], V=volume, T=decision_points,
+                          period_length=period_length, vol_intervals=volume_intervals,
+                          actions=actions, state_variables=state_variables, 
+                          outputfile=outputfile_model)
 
     
 def main2():
     ## Settings
     experiment_name='1611_USDTBTC_Qtable_100vol10_60T4'
     inputfile='/home/axel/data/obs_2016-11_USDT_BTC_range1.2.dict'
+    folder='experiments'
+    outputfile_model=os.path.join(outputfolder, experiment_name, 'model', experiment_name)
+    outputfile_model='q.json'
     volume=100
     volume_intervals=10
     decision_points=4
     period_length=15
     action_min=-0.4
     action_max=1.0
-    action_count=2
-    folder='experiments'
-    plotQ=True
+    action_count=15
     state_variables=['volume','time','spread']
     
-    run(experiment_name=experiment_name, inputfile=inputfile, volume=volume,
+    run(inputfile=inputfile, volume=volume,
         volume_intervals=volume_intervals, decision_points=decision_points,
         period_length=period_length, action_min=action_min, action_max=action_max,
-        action_count=action_count, folder=folder, plotQ=plotQ, state_variables=state_variables)
+        action_count=action_count, folder=folder, state_variables=state_variables,
+        outputfile_model=outputfile_model)
 
 if __name__ == '__main__':
     fire.Fire(run)

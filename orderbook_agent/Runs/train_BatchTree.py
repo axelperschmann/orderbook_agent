@@ -9,11 +9,11 @@ sys.path.append('..')
 from helper.rl_framework import *
 from helper.orderbook_container import OrderbookContainer
 from helper.orderbook_trader import *
-from agents.NN_Agent import RLAgent_NN
+# from agents.NN_Agent import RLAgent_NN
 from agents.BatchTree_Agent import RLAgent_BatchTree
 
-
-def trainer(orderbooks, V, T, period_length, actions, epochs, random_start=True, state_variables=['volume', 'time']):
+def trainer(orderbooks, V, T, period_length, actions, epochs,
+    state_variables=['volume', 'time'], random_start=True, limit_steps=None):
 
     brain = RLAgent_BatchTree(
         actions=actions,
@@ -40,8 +40,13 @@ def trainer(orderbooks, V, T, period_length, actions, epochs, random_start=True,
             
             ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
 
-            for t in range(startpoint, T)[:1]:
+            if limit_steps is None or not imit_steps:
+                max_steps = T
+            else:
+                max_steps = limit_steps
 
+            for t in range(startpoint, T)[:max_steps]:
+                
                 time_left = T - t
                 timepoint = t*period_length
                 timepoint_next = min((t+1)*period_length, len(window)-1)
@@ -49,26 +54,27 @@ def trainer(orderbooks, V, T, period_length, actions, epochs, random_start=True,
                 ob_next = window[timepoint_next]
                         
                 state = brain.generate_state(time_left=time_left, 
-                                             volume_left=volume,
+                                             volume_left=float(ots.volume),
                                              orderbook=ob_now)
                 
-                # action, action_idx = brain.get_action(state, exploration)
-                for action_idx, action in enumerate(actions):
-                    ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
+                action, action_idx = brain.get_action(state, exploration)
+                # for action_idx, action in enumerate(actions):
+                # ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
 
-                    limit = ob_now.get_ask() * (1. + (action/100.))
-                    summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
-                    
-                    new_state = brain.generate_state(time_left=time_left-1,
-                                                     volume_left=float(ots.volume),
-                                                     orderbook=ob_next)
-                    cost = ots.history.cost.values[-1]
+                limit = ob_now.get_ask() * (1. + (action/100.))
+                summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
+                
+                new_state = brain.generate_state(time_left=time_left-1,
+                                                 volume_left=float(ots.volume),
+                                                 orderbook=ob_next)
 
-                    # print("{} {:1.2f} {:1.4f} {}".format(state, action, cost, new_state))
+                cost = ots.history.cost.values[-1]
 
-                    done = summary['done']
+                # print("{} {:1.2f} {:1.4f} {}".format(state, action, cost, new_state))
+                
+                done = summary['done']
 
-                    brain.append_samples(state, action, action_idx, cost, done, new_state)
+                brain.append_samples(state, action, action_idx, cost, done, new_state)
 
 
         brain.fitted_Q_iteration_tree(nb_it=10)
