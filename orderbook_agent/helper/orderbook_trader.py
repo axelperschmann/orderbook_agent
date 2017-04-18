@@ -59,6 +59,7 @@ class OrderbookTradingSimulator(object):
         if custom_starttime is not None:
             self.t = custom_starttime*self.period_length
             # print("new t: {}".format(self.t))
+        self.t_initial = self.t
 
         self.volume =  self.initial_volume
         if custom_startvolume is not None:
@@ -98,17 +99,8 @@ class OrderbookTradingSimulator(object):
             return self.masterbook
 
     def adjust_masterbook(self):
-        if self.t == 0:
+        if self.t == self.t_initial:
             return
-
-        # check difference between previous and current orderbook
-
-        # ob_current = self.orderbooks[self.t]
-        # ob_previous = self.orderbooks[self.t-1]
-        # asks_diff = ob_current.asks.subtract(ob_previous.asks, axis=1, fill_value=0)
-        # asks_diff = asks_diff[asks_diff != 0].dropna()
-        # bids_diff = ob_current.bids.subtract(ob_previous.bids, axis=1, fill_value=0)
-        # bids_diff = bids_diff[bids_diff != 0].dropna()
     
         asks_diff = self.diffs[self.t-1].asks
         bids_diff = self.diffs[self.t-1].bids
@@ -132,12 +124,14 @@ class OrderbookTradingSimulator(object):
         # assert isinstance(orderbooks, list)
         # assert type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         # assert len(orderbooks)>=self.period_length
+
         assert (isinstance(limit, (float, int)) and limit > 0) or not limit
         assert (isinstance(agression_factor, (float, int)) and not limit) or not agression_factor
         assert isinstance(verbose, bool)
         assert isinstance(extrainfo, dict)
         
         timestamp = self.timestamps[self.t]
+        
         info = pd.DataFrame(data={'BID': None,
                                   'ASK': None,
                                   'SPREAD': None,
@@ -171,12 +165,11 @@ class OrderbookTradingSimulator(object):
         for t in range(self.period_length):
             if self.volume==0:
                 # Do nothing!
-
                 return self.summary
             
             self.adjust_masterbook()
             ob = self.masterbook
-
+            
             if t == 0:
                 # record basic informations from beginning of trading period
                 info.ASK = ob.get_ask()
@@ -191,12 +184,13 @@ class OrderbookTradingSimulator(object):
 
                     elif self.order_type == 'sell':
                         best_price = ob.get_bid()
+
                     current_price, max_limit = ob.get_current_price(self.volume)
                     limit_gap = max_limit - best_price
                     limit = best_price + limit_gap * agression_factor
                     info['LIMIT'] = limit          
                     info['LIMIT_MAX'] = max_limit
-                
+            
             if self.t == self.timespan-1:
                 # must sell all remaining shares. Place Market Order!
                 info['forced'] = True
