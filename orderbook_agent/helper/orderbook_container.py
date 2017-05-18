@@ -21,7 +21,7 @@ class OrderbookContainer(object):
             return result
         return wrap
 
-    def __init__(self, timestamp, bids, asks, *, kind='orderbook'):  #enriched=False, 
+    def __init__(self, timestamp, bids, asks, features=None, kind='orderbook'):  #enriched=False, 
         assert isinstance(timestamp, str), "Parameter 'timestamp' is '{}', type={}".format(timestamp, type(timestamp))
         assert isinstance(bids, pd.DataFrame)  # and len(bids)>0
         assert isinstance(asks, pd.DataFrame)  # and len(asks)>0
@@ -31,6 +31,8 @@ class OrderbookContainer(object):
         self.bids = bids
         self.asks = asks  
         self.kind = kind
+        self.norm_factor = 1.0
+        self.features = features or {}
         
         if kind == 'orderbook':
             # sorting is computationally expensive. Avoid it when working on 'diff'-book
@@ -44,7 +46,8 @@ class OrderbookContainer(object):
             bids=self.bids,
             asks=self.asks,
             # enriched=self.enriched,
-            kind=self.kind)
+            kind=self.kind,
+            features=self.features)
     
     def compare_with(self, other):        
         bids_diff = self.bids.subtract(other.bids, axis=1, fill_value=0)
@@ -53,11 +56,26 @@ class OrderbookContainer(object):
         return OrderbookContainer(timestamp=self.timestamp,
                                   bids=bids_diff[bids_diff != 0].dropna(),
                                   asks=asks_diff[asks_diff != 0].dropna(),
+                                  features=None,
                                   kind='diff')
         
     def __str__(self):
+
+        representation = "OrderbookContainer from {} (factor: {})\n  {} bids (best: {})\n  {} asks (best: {})\nprice: {}\n  kind: '{}'".format(
+            self.timestamp,
+            self.norm_factor,
+            len(self.bids),
+            self.get_bid(),
+            len(self.asks),
+            self.get_ask(),
+            self.get_center(),
+            self.kind)
+
+        if hasattr(self, 'features') and len(self.features) > 0:
+            for key in self.features.keys():
+                representation = "{}\n  -{}: {}".format(representation, key, self.features[key])
         
-        return "OrderbookContainer from {}\n  {} bids (best: {})\n  {} asks (best: {})\n  kind: '{}'".format(self.timestamp, len(self.bids), self.get_bid(), len(self.asks), self.get_ask(), self.kind)
+        return representation
     
     def __repr__(self):
           return self.__str__()
@@ -181,8 +199,42 @@ class OrderbookContainer(object):
     # 
     #     self.enriched = False
 
+    def discretize(self, ticksize=0.1, depth=None, center='ask', range_factor=None):
+        data = self.to_DataFrame(range_factor=range_factor)
+
+        # center = data[data.Type=='center'].index[0]
+        # data['norm_Price'] = data.index / center
+        # data['Volume'] = data.index * data.Amount
+        # data['VolumeAcc'] = 0
+
+        bids = self.bids.copy()
+        bids['Volume'] = bids.index * bids.Amount
+        asks = self.asks.copy()
+        asks['Volume'] = asks.index * asks.Amount
+
+
+        bids['VolumeAcc'] = bids.Volume.cumsum()
+        asks['VolumeAcc'] = asks.Volume.cumsum()
+
+        display("asks", asks.head(5))
+        display("bids", bids.head(3)  )
+
+        center = float(self.get_center())
+        print("center", center)
+
+        query = center * (1.001)
+        idx = asks.index.get_loc(query, method='bfill')
+        print("idx", idx, query)
+        print(asks.iloc[idx,:])
+
+        if isinstance(depth, int):
+            center_idx = data.index.get_loc(data[data.Type=='center'].index[0])
+            data = data.iloc[center_idx-depth:center_idx+depth+1,:].copy()
+
+        return asks
+
     
-    def plot(self, *, normalized=False, range_factor=None, outfile=None, figsize=(8,6), outformat='pdf'):
+    def plot(self, normalized=False, range_factor=None, outfile=None, figsize=(8,6), outformat='pdf'):
         assert isinstance(normalized, bool)
         assert (isinstance(range_factor, (float, int)) and range_factor > 1) or range_factor is None
         assert isinstance(outfile, str) or outfile is None

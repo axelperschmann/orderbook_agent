@@ -10,17 +10,20 @@ from .RL_Agent_Base import RLAgent_Base
 
 class QTable_Agent(RLAgent_Base):
 
-    def __init__(self, actions, vol_intervals, V=100, T=4, period_length=15,
+    def __init__(self, actions, lim_stepsize, vol_intervals, limit_base, V=100, T=4, period_length=15, samples=None,
                  agent_name='QTable_Agent', state_variables=['volume', 'time'],
                  normalized=True, interpolate_vol=False):
         super().__init__(
             actions=actions,
+            lim_stepsize=lim_stepsize,
             V=V,
             T=T,
             period_length=period_length,
+            samples=samples,
             agent_name=agent_name,
             state_variables=state_variables,
-            normalized=normalized
+            normalized=normalized,
+            limit_base=limit_base
         )
 
         self.vol_intervals = vol_intervals
@@ -31,9 +34,9 @@ class QTable_Agent(RLAgent_Base):
         self.n = {}  # n is the number of times we have tried an action in a state
 
 
-    def save(self, outfile):
-        if outfile[-4:] != 'json':
-            outfile = '{}.json'.format(outfile)
+    def save(self, outfile_agent, outfile_samples):
+        if outfile_agent.split(".")[-1] != 'json':
+            outfile_agent = '{}.json'.format(outfile_agent)
 
         puffer_q = {}
         puffer_n = {}
@@ -42,31 +45,38 @@ class QTable_Agent(RLAgent_Base):
             puffer_n[elem] = self.n[elem].tolist()
 
         obj = {'actions': self.actions,
+               'lim_stepsize': self.lim_stepsize,
                'vol_intervals': self.vol_intervals,
                'T': self.T,
                'V': self.V,
                'period_length': self.period_length,
+               # 'samples': self.samples,
                'agent_name': self.agent_name,
                'state_variables': self.state_variables,
                'normalized': self.normalized,
+               'limit_base': self.limit_base,
                'interpolate_vol': self.interpolate_vol,
                'q': puffer_q,
                'n': puffer_n}
 
-        with open(outfile, 'w') as f_out:
-            f_out.write(json.dumps(obj) + "\n")
+        # save agent to disk
+        with open(outfile_agent, 'w') as f_out:
+            f_out.write(json.dumps(obj, default=lambda df: json.loads(df.to_json())) + "\n")
+        print("Saved agent: '{}'".format(outfile_agent))
 
-        print("Saved: '{}'".format(outfile))
+        # save samples to disk
+        if outfile_samples.split(".")[-1] != 'csv':
+            outfile_samples = '{}.csv'.format(outfile_samples)
+        self.samples.to_csv(outfile_samples)
+        print("Saved samples: '{}'".format(outfile_samples))
 
-    def load(infile):
-        if infile[-4:] != 'json':
-            infile = '{}.json'.format(infile)
-        
-        with open(infile, 'r') as f:
+    def load(infile_agent, infile_samples):
+        with open(infile_agent, 'r') as f:
             data = json.load(f)
         
         ql = QTable_Agent(
             actions=data['actions'],
+            lim_stepsize=data.get('lim_stepsize', 0.1),
             vol_intervals=data['vol_intervals'],
             T=data['T'],
             V=data['V'],
@@ -74,6 +84,7 @@ class QTable_Agent(RLAgent_Base):
             agent_name=data['agent_name'],
             state_variables=data['state_variables'] or ['volume', 'time'],
             normalized=data['normalized'],
+            limit_base=data['limit_base'],
             interpolate_vol=data['interpolate_vol']
             )
         
@@ -82,6 +93,8 @@ class QTable_Agent(RLAgent_Base):
         for elem in ql.q:
             ql.q[elem] = np.array(ql.q[elem])
             ql.n[elem] = np.array(ql.n[elem])
+
+        ql.samples = pd.read_csv(infile_samples, index_col=0)
 
         return ql
 
@@ -94,20 +107,25 @@ class QTable_Agent(RLAgent_Base):
 
     def _get_nearest_neighbours(self, state, variable='volume'):
         assert isinstance(variable, str) and variable in ['volume']
+        volumes = self.volumes
+        if 0. not in volumes:
+            volumes = np.array(list(volumes) + [0])
 
         if variable == 'volume':
             vol = state[0]
-
             # find nearest neighbours
             if self.normalized:
-                idx = np.argsort(abs(self.volumes/self.V-vol))[:2]
+                idx = np.argsort(abs(volumes/self.V-vol))[:2]
             else:
-                idx = np.argsort(abs(self.volumes-vol))[:2]
+                idx = np.argsort(abs(volumes-vol))[:2]
 
-            neighbours = self.volumes[sorted(idx)]
+            neighbours = volumes[sorted(idx)]
 
-            w = (vol - (neighbours[1]/self.V))  / (self.volumes_base/self.V)
-                        
+            if self.normalized:
+                w = (vol - (neighbours[1]/self.V))  / (self.volumes_base/self.V)
+            else:
+                w = (vol/self.V - (neighbours[1]/self.V))  / (self.volumes_base/self.V)
+            
             n1 = state.copy()
             n2 = state.copy()
             n1[0] = neighbours[0]
@@ -124,15 +142,20 @@ class QTable_Agent(RLAgent_Base):
         Q_values = self.q.get(str(state), np.full(self.action_dim, np.nan))  # np.zeros(self.action_dim))
 
         if self.interpolate_vol:
+            
             if str(state) not in self.q.keys():
                 # only interpolate between states when necessary
                 vol = state[0]
                 if vol>self.volumes_base/self.V:
                     # interpolate between neighboring states (volume based neigbours)
                     n1, n2, w = self._get_nearest_neighbours(state, variable='volume')
+
                     pred1 = self.q.get(str(n1), np.full(self.action_dim, np.nan))
                     pred2 = self.q.get(str(n2), np.full(self.action_dim, np.nan))
-                    # print("neighbours: ", state, n1, n2)
+
+                    if np.all([math.isnan(val) for val in pred2]):
+                        pred2 = np.array([0]*self.action_dim)
+                    
                     if not(np.all([math.isnan(val) for val in pred1]) or np.all([math.isnan(val) for val in pred2])):
                         Q_values = w*pred1 + (1-w)*pred2
                 else:
@@ -195,7 +218,8 @@ class QTable_Agent(RLAgent_Base):
 
         if (np.isnan(q).all() == True):
             print("No Q-table entry found for state '{}'".format(state))
-            raise ValueError
+            q = np.zeros_like(q)
+            # raise ValueError
         
         if which_min == 'first':
             # if multiple minima exist, choose first one (lowest aggression level)
@@ -214,10 +238,14 @@ class QTable_Agent(RLAgent_Base):
 
     def sample_from_Q(self, vol_intervals, which_min):
         assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
-
+        
+        if self.interpolate_vol:
+            volumes = np.linspace(self.V, 0, num=vol_intervals+1)[:-1] 
+        else:
+            volumes = self.volumes
         df = pd.DataFrame([], columns=self.state_variables)
         for t in range(1, self.T+1):
-            for v in self.volumes:
+            for v in volumes:
                 state = self.generate_state(time_left=t,
                                             volume_left=v)
                 

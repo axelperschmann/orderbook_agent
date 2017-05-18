@@ -1,4 +1,4 @@
-from tqdm import tqdm
+from tqdm import tqdm, tqdm_notebook
 import pandas as pd
 import numpy as np
 from IPython.display import display
@@ -12,24 +12,37 @@ from helper.orderbook_trader import *
 # from agents.NN_Agent import RLAgent_NN
 from agents.BatchTree_Agent import RLAgent_BatchTree
 
-def trainer(orderbooks, V, T, period_length, actions, epochs,
-    state_variables=['volume', 'time'], random_start=True, limit_steps=None):
+def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, 
+        lim_stepsize=0.1, state_variables=['volume', 'time'], random_start=True,
+        limit_steps=None):
 
     brain = RLAgent_BatchTree(
         actions=actions,
         state_variables=state_variables,
         V=V, T=T,
         period_length=period_length,
-        normalized=False
+        normalized=False,
+        lim_stepsize=lim_stepsize,
+        limit_base=limit_base,
     )
     print(brain)
-    for i_window, window in (enumerate(orderbooks)):
-    #window = orderbooks[0]
+    for i_window, window in tqdm_notebook(enumerate(orderbooks), leave=False):
+
+        initial_center = window[0].get_center()
+        
+    
         ots = OrderbookTradingSimulator(orderbooks=window, volume=V,
                                         tradingperiods=T, period_length=period_length)
-        for e in tqdm(range(epochs)):
-            exploration = max(1.0/2**(e/20), 0.8)
-            # print("{}: exploration = {}".format(e, exploration))
+        initial_center = window[0].get_center()
+        lim_increments = initial_center * (brain.lim_stepsize / 100)
+
+        initial_marketprice, initial_limitWorst = window[0].get_current_price(brain.V)
+        initial_limitAvg = initial_marketprice / brain.V
+        market_slippage = initial_limitAvg - initial_center
+        
+        for e in tqdm_notebook(range(epochs)):
+            exploration = max(1.0/2**(e/20), 0.6)
+            print("{}: exploration = {}".format(e, exploration))
 
             volume = V
             startpoint = 0
@@ -52,6 +65,7 @@ def trainer(orderbooks, V, T, period_length, actions, epochs,
                 timepoint_next = min((t+1)*period_length, len(window)-1)
                 ob_now = window[timepoint]
                 ob_next = window[timepoint_next]
+                price_incScale = int(ob_now.get_center()/lim_increments)
                         
                 state = brain.generate_state(time_left=time_left, 
                                              volume_left=float(ots.volume),
@@ -61,7 +75,14 @@ def trainer(orderbooks, V, T, period_length, actions, epochs,
                 # for action_idx, action in enumerate(actions):
                 # ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
 
-                limit = ob_now.get_ask() * (1. + (action/100.))
+                if brain.limit_base == 'currAsk':
+                    limit = ob_now.get_ask() * (1. + (action/100.))
+                elif brain.limit_base == 'incStepUnits':
+                    limit = lim_increments * (price_incScale + action)
+                else:
+                    raise NotImplementedError
+
+
                 summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
                 
                 new_state = brain.generate_state(time_left=time_left-1,
@@ -74,10 +95,20 @@ def trainer(orderbooks, V, T, period_length, actions, epochs,
                 
                 done = summary['done']
 
-                brain.append_samples(state, action, action_idx, cost, done, new_state)
+                # brain.append_samples(state, action, action_idx, cost, done, new_state)
+                brain.append_samples(
+                        state=state,
+                        action=action,
+                        action_idx=action_idx,
+                        cost=cost,
+                        timestamp=ob_now.timestamp,
+                        avg=ots.history.avg[-1],
+                        initial_center=initial_center,
+                        new_state=new_state
+                    )
 
 
-        brain.fitted_Q_iteration_tree(nb_it=10)
+        brain.fitted_Q_iteration_tree(nb_it=T*2)
 
     print("brain.samples.shape", brain.samples.shape)
     return brain

@@ -12,6 +12,7 @@ from IPython.display import display
 import itertools
 
 from helper.orderbook_container import OrderbookContainer
+from helper.orderbook_trader import OrderbookTradingSimulator
 
 class OrderbookEpisodesGenerator(object):
     
@@ -133,8 +134,25 @@ def plot_Q(model, V, T, actions, STATE_DIM=2, outfile=None, outformat=None):
         plt.show()
     plt.close()
 
+def convert_actions_to_limit(episode_windows, actions, lim_stepsize=0.1):
+    init_center = episode_windows[0].get_center()
+    lim_increments = init_center * (lim_stepsize / 100)
 
-def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=None, outformat='pdf', intervals=1, legend=True, limits=None):
+    period_length = int(len(episode_windows) / len(actions))
+    decision_points = [period_length*t for t in range(int(len(episode_windows)/period_length))]
+    
+    limits = []
+    for t, timepoint in enumerate(decision_points):
+        ob_now = episode_windows[timepoint]
+        price_incScale = int(round(ob_now.get_center()/lim_increments, 3))
+        limits.append(lim_increments * (price_incScale + actions[t]))
+    print("limits", limits)
+    return limits
+
+
+def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
+                 outfile=None, outformat='pdf', intervals=1, kind="avg",
+                 legend=True, limits=None, actions=None, lim_stepsize=0.1, vlines=None, hlines=None):
     assert isinstance(episode_windows, list)
     assert type(episode_windows[0]).__name__ == "OrderbookContainer"
     assert isinstance(volume, (int, float))
@@ -144,10 +162,12 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
     assert isinstance(outfile, str) or outfile is None
     assert isinstance(outformat, str)
     assert (isinstance(intervals, int) and intervals > 0) or intervals is None
+    assert isinstance(kind, str) and kind in ['avg', 'worst']
     assert isinstance(legend, bool)
     assert isinstance(limits, list) or limits is None
     volume = abs(volume)
     
+    initial_center = episode_windows[0].get_center()
     center = []
     ask = []
     bid = []
@@ -159,16 +179,24 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
 
     timestamps = []
 
+    if isinstance(actions, list) and lim_stepsize is not None:
+        limits = convert_actions_to_limit(episode_windows, actions=actions)
+
     if limits is not None:
-        period_length = len(episode_windows) / len(limits)
+        period_length = int(len(episode_windows) / len(limits))
         limit_idx = 0
         limits_y = []
+        fig, axs = plt.subplots(nrows=3, figsize=figsize)
+        ax = axs[0]
+    else:
+        fig, ax = plt.subplots(nrows=1, figsize=figsize)
 
-    fig, ax = plt.subplots(figsize=figsize)
     for o, ob in enumerate(episode_windows):
         if (limits is not None) and (o%period_length == 0):
-            limits_y = limits_y + list(np.repeat(ob.get_ask() * (1. + (limits[limit_idx]/100.)), period_length))
+            #limits_y = limits_y + list(np.repeat(ob.get_ask() * (1. + (limits[limit_idx]/100.)), period_length))
+            limits_y = limits_y + list(np.repeat(limits[limit_idx], period_length))
             limit_idx += 1
+            #print("x", ob.get_ask() * (1. + (limits[limit_idx]/100.)))
 
         center.append(ob.get_center())
         ask.append(ob.get_ask())
@@ -176,41 +204,112 @@ def plot_episode(episode_windows, volume, *, figsize=(8,6), ylim=None, outfile=N
 
         for i in range(intervals):
             volume_fraction = 1.*(i+1)/intervals * volume
-            price_ask[i].append(ob.get_current_price(volume_fraction)[0] / volume_fraction)
-            price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
+            if kind == 'avg':
+                # Show current average price, when buying specified volume.
+                price_ask[i].append(ob.get_current_price(volume_fraction)[0] / volume_fraction)
+                price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
+            elif kind == 'worst':
+                # Show current worst price, when buying specified volume.
+                price_ask[i].append(ob.get_current_price(volume_fraction)[1])
+                price_bid[i].append(ob.get_current_price(-volume_fraction)[1])
         timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
-
-    if limits is not None:
-        plt.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
     
-    plt.plot(timestamps, center, color='black', label='Center')
-    plt.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
-    plt.plot(timestamps, ask, color='red', linestyle="--", label='Ask')
+    if limits is not None:
+        ax.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
+        ots = OrderbookTradingSimulator(orderbooks=episode_windows, volume=volume, tradingperiods=len(limits),
+                                             period_length=period_length)
 
-    plt.plot(timestamps, bid, color='green', linestyle="--", label='Bid')
-    plt.fill_between(timestamps, price_bid[intervals-1], bid, color='green', alpha=0.1)
+        traded_volume = []
+        volume_left = [100]
+        costs = []
+        avgs = []
+        for t, lim in enumerate(limits_y):
+            if t == len(limits_y) -1:
+                # forced trade at very end of tradingperiod
+                lim = None
+            ots.adjust_masterbook()
+            summary = ots.perform_trade_wrapper(ots.masterbook, limit=lim)
+            ots.t +=1
+            ots.volume -= summary['volume']
+
+            traded_volume.append(summary['volume'])
+            volume_left.append(ots.volume)
+            
+            cost = 0
+            avg = np.nan
+            if abs(summary['volume']) > 0:
+                avg = abs(summary['cash']) / summary['volume']
+                cost = summary['volume'] * (avg - ots.initial_center) / ots.market_slippage
+            costs.append(cost)
+            avgs.append(avg)
+            if abs(ots.volume) < 1e-10:
+                break
+
+        axs[1].bar(range(len(traded_volume)), traded_volume, align='edge', alpha=0.7)
+        axs[1].set_ylabel("Traded shares")
+        ax2 = axs[1].twinx()
+        ax2.step(range(len(volume_left)), volume_left, where='mid', color='red', label='volume')
+        ax2.set_ylabel("Volume left")
+        ax2.set_xlim((-1,len(timestamps)))
+        ax2.legend(loc='best')
+        axs[1].set_xlabel("t")
+        ax2.axhline(0, color='black', alpha=0.5)
+        
+        axs[2].set_ylim((np.nanmin(avgs), np.nanmax(avgs)))
+        axs[2].bar(range(len(avgs)), avgs, align='edge', alpha=0.7, label='avg price')
+        axs[2].set_ylabel("avg price")
+
+        ax4 = axs[2].twinx()
+        ax4.step(range(len(costs)), np.cumsum(np.array(costs)), where='mid', color='red', alpha=0.6, label='acc costs')
+        ax4.step(range(len(costs)), np.cumsum(np.array(costs))/np.cumsum(np.array(traded_volume))*volume, where='mid', color='green', alpha=0.6, label='expected costs')
+        ax4.set_ylabel("Costs")
+        ax4.legend(loc='best')
+        ax4.set_xlim((-1,len(timestamps)))
+        if vlines is None:
+            vlines = [period_length*t for t in range(int(len(episode_windows)/period_length))]
+        axs[2].set_xlabel("actions: {}, costs: {:1.2f}".format(actions, np.array(costs).sum()))
+    
+    ax.plot(timestamps, center, color='black', label='Center')
+    ax.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
+    ax.plot(timestamps, ask, color='red', linestyle="--", label='Ask')
+
+    ax.plot(timestamps, bid, color='green', linestyle="--", label='Bid')
+    ax.fill_between(timestamps, price_bid[intervals-1], bid, color='green', alpha=0.1)
+
+    if isinstance(vlines, list):
+        for vl in vlines:
+            ax.axvline(timestamps[vl], color='black', alpha=0.2)
+            if limits is not None:
+                axs[1].axvline(vl, color='black', alpha=0.2)
+                axs[2].axvline(vl, color='black', alpha=0.2)
+    if isinstance(hlines, list):
+        for hl in hlines:
+            ax.axhline(hl)
     
     for i in range (intervals):
         volume_fraction = 1.*(i+1)/intervals
-        plt.plot(timestamps, price_bid[i], color='green', alpha=volume_fraction, label='Market Price (Selling {:1.2f})'.format(volume_fraction*volume))
-        plt.plot(timestamps, price_ask[i], color='red', alpha=volume_fraction, label='Market Price (Buying{:1.2f})'.format(volume_fraction*volume))
+        ax.plot(timestamps, price_bid[i], color='green', alpha=volume_fraction)
+        ax.plot(timestamps, price_ask[i], color='red', alpha=volume_fraction)
         
-    title = "Price comparison for a trade volume of {} shares".format(volume)
+    title = "'{}' Price comparison for a trade volume of {} shares".format(kind, volume)
+
     if intervals > 1:
         title = "{} (interval size: {})".format(title, 1.*volume/intervals)
         
-    plt.title(title)
-
-    plt.xticks(rotation=40)
+    ax.set_title(title)
+    if vlines is not None:
+        ax.set_xticks([timestamps[vl] for vl in vlines])
     myFmt = mdates.DateFormatter('%H:%M')
     ax.xaxis.set_major_formatter(myFmt)
+    ax.set_xlim((timestamps[0] - pd.Timedelta(1, unit='m'), timestamps[-1] + pd.Timedelta(1, unit='m')))
+    print(timestamps[-1] + pd.Timedelta(1, unit='m'), timestamps[-1], pd.Timedelta(1, unit='m'))
     
-    plt.ylabel('Price')
-    plt.xlabel(episode_windows[0].timestamp)
+    ax.set_ylabel('Price')
+    ax.set_xlabel(episode_windows[0].timestamp)
     if legend:
-        plt.legend(loc='best', prop={'size': 6})
+        ax.legend(loc='best', prop={'size': 6})
     if ylim is not None:
-        plt.ylim(ylim)
+        ax.set_ylim(ylim)
     
     if outfile is None:
         plt.show()
@@ -274,6 +373,30 @@ def load_orderbook_snapshot(infile, verbose=True, first_line=None, last_line=Non
     if verbose:
         print("Loaded {} orderbooks from file '{}'.".format(len(data), infile))
     return data
+
+
+def extract_orderbooks_history(datafiles, currency_pair, outfile, overwrite=True):
+    history = pd.DataFrame()
+    
+    for fullpath in tqdm(datafiles):
+        with gzip.open(fullpath, 'r') as f_in:
+            df = json.load(f_in)
+            if df['orderbook_' + currency_pair].keys()[0] == 'error':
+                continue
+            
+            timestamp = df['timestamp'][:16] # cut off milliseconds
+
+            df_history = pd.DataFrame(pd.DataFrame(df['ticker'])[currency_pair]).T
+            df_history.index = [timestamp]
+
+            history = pd.concat([history, df_history])
+    
+    history.index = pd.to_datetime(history.index)
+    if outfile is not None:
+        history.to_csv(outfile)
+        print("Exported history '{}'".format(outfile))
+
+    return history
 
 
 def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, overwrite=True,

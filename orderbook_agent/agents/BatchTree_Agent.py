@@ -1,4 +1,4 @@
-from tqdm import tqdm
+from tqdm import tqdm, tqdm_notebook
 import pandas as pd
 import numpy as np
 from IPython.display import display
@@ -10,21 +10,21 @@ from helper.orderbook_trader import OrderbookTradingSimulator
 
 
 class RLAgent_BatchTree(RLAgent_Base):
-    def __init__(self, actions, V, T, period_length, model=None, samples=None,
+    def __init__(self, actions, lim_stepsize, V, T, period_length, limit_base, model=None, samples=None,
                  agent_name='BatchTree_Agent', state_variables=['volume', 'time'],
                  normalized=True):
         super().__init__(
             actions=actions,
+            lim_stepsize=lim_stepsize,
             V=V,
             T=T,
             period_length=period_length,
+            samples=samples,
             agent_name=agent_name,
             state_variables=state_variables,
-            normalized=normalized)
+            normalized=normalized,
+            limit_base=limit_base)
         self.model = model
-        
-        self.columns = state_variables + ['action', 'action_idx', 'cost', 'done'] + [var + "_n" for var in state_variables]
-        self.samples = pd.DataFrame(samples, columns=self.columns)
 
     def predict(self, states):
         df = pd.DataFrame(states).T
@@ -61,39 +61,42 @@ class RLAgent_BatchTree(RLAgent_Base):
         print("learn")
         raise NotImplementedError    
 
-    def append_samples(self, state, action, action_idx, cost, done, new_state):
-        tmp = pd.DataFrame([state.tolist() + [action] + [action_idx] + [cost] + [done] + new_state.tolist()], columns=self.columns)
-        self.samples = pd.concat([self.samples, tmp], axis=0, ignore_index=True)
-
-    def fitted_Q_iteration_tree(self, nb_it):
+    def fitted_Q_iteration_tree(self, nb_it, n_estimators=20, max_depth=12):
         reg = None
         d_rate = 0.95
         df = self.samples.copy()
+        print("samples.shape", df.shape)
+        print("state_dim: ", self.state_dim, self.state_variables)
+        df.insert(loc=len(df.columns)-self.state_dim, column='done', value=abs(df['volume_n']) < 0.00001)
+        df.insert(loc=len(df.columns)-self.state_dim, column='min_cost', value=df['cost'])
         df['min_cost'] = df['cost']
-        # display(df)
-        for n in range(nb_it):
-            
+
+        for n in tqdm_notebook(range(nb_it)):
+            print("n", n)
+
             # training an estimate of q_1
             if reg is not None:
                 # using previous classifier as estimate of q_n-1
-                states = df.iloc[:, -self.state_dim-1:-1]
-
+                states = df[["{}_n".format(var) for var in self.state_variables]].copy()
+                #display("shape", states.shape, states.dropna().shape, df.shape, df.dropna().shape)
                 preds = []
                 for a in self.actions:
-                    d = pd.concat([states, pd.DataFrame(np.ones(states.shape[0])*a)], axis=1)
-                    preds.append(reg.predict(d))
-            
+                    states['action'] = a
+                    # display(a, states.shape, states.dropna().shape)
+                    preds.append(reg.predict(states))
+                preds = pd.DataFrame(preds, index=self.actions, columns=df.index)
+                
                 # preparing our new training data set
                 # if done, do not add any future costs anymore.
-                df['min_cost'] = df['cost'] + (1 - df['done']) * (np.amin(preds, axis=0) * d_rate)
-            else:
-                df['min_cost'] = df['cost']
-            
-            features = df.columns[:self.state_dim+1]
-            reg = RandomForestRegressor(n_estimators=100, max_depth=5)
-            reg = reg.fit(df[features], df['min_cost'])
-            
-        self.model = reg
+                df['min_cost'] = (df['cost'] + (1 - df['done']) * (preds.min() * d_rate))
+                
+            reg = RandomForestRegressor(n_estimators=20, max_depth=max_depth)
+            reg = reg.fit(df[self.state_variables+['action']], df['min_cost'])
+            print("Score:", reg.score(df[self.state_variables+['action']], df['min_cost']))
+            print("Feature importances:", reg.feature_importances_)
+            self.model = reg
+
+            #self.heatmap_Q(show_traces=False, show_minima_count=True, vol_intervals=10)
 
     def sample_from_Q(self, vol_intervals, which_min):
         assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
