@@ -80,9 +80,43 @@ class OrderbookContainer(object):
     def __repr__(self):
           return self.__str__()
 
+
+    def get_current_sharecount(self, cash):
+        assert isinstance(cash, (int,float)) and cash != 0, "'cash' must not be 0"
+        shares = 0
+        if cash > 0:
+            orders = self.asks
+            orderdirection = 1
+        else:
+            orders = self.bids
+            orderdirection = -1
+        orders['Volume'] = orders.Amount * orders.index
+        assert cash < orders.Volume.sum(), "Can't handle trade. Orderbookvolume exceeded {} vs {}".format(orders.Volume.sum(), cash)
+        
+        accVol = orders.Volume.cumsum()
+        fast_items = len(accVol[accVol < abs(cash)].index)
+        
+        if fast_items > 0:
+            orders_sub = orders.iloc[:fast_items,:]
+            shares = orders_sub.Amount.sum()
+            cash -= orders_sub.Volume.sum() * orderdirection
+        
+        for pos in range(fast_items, len(orders)):
+            order = orders.iloc[pos]
+            price = order.name
+
+            if abs(cash) - order.Volume >= 0:
+                current_order_volume = order.Volume/order.name
+            else:
+                current_order_volume = cash/order.name
+
+            cash -= current_order_volume * price * orderdirection
+            shares += current_order_volume
+        
+        return shares
         
     def get_current_price(self, volume):
-        assert isinstance(volume, (int, float)) and volume != 0, "volume must not be 0"
+        assert isinstance(volume, (int, float)) and volume != 0, "'volume' must not be 0"
         price = 0
         
         if volume > 0:

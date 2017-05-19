@@ -150,7 +150,7 @@ def convert_actions_to_limit(episode_windows, actions, lim_stepsize=0.1):
     return limits
 
 
-def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
+def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), ylim=None,
                  outfile=None, outformat='pdf', intervals=1, kind="avg",
                  legend=True, limits=None, actions=None, lim_stepsize=0.1, vlines=None, hlines=None):
     assert isinstance(episode_windows, list)
@@ -216,11 +216,11 @@ def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
     
     if limits is not None:
         ax.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
-        ots = OrderbookTradingSimulator(orderbooks=episode_windows, volume=volume, tradingperiods=len(limits),
+        ots = OrderbookTradingSimulator(orderbooks=episode_windows, volume=volume, consume=consume, cash=0, tradingperiods=len(limits),
                                              period_length=period_length)
 
         traded_volume = []
-        volume_left = [100]
+        volume_left = [volume]
         costs = []
         avgs = []
         for t, lim in enumerate(limits_y):
@@ -238,13 +238,13 @@ def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
             cost = 0
             avg = np.nan
             if abs(summary['volume']) > 0:
-                avg = abs(summary['cash']) / summary['volume']
+                avg = abs(summary['cash_traded']) / summary['volume']
                 cost = summary['volume'] * (avg - ots.initial_center) / ots.market_slippage
             costs.append(cost)
             avgs.append(avg)
             if abs(ots.volume) < 1e-10:
                 break
-
+        
         axs[1].bar(range(len(traded_volume)), traded_volume, align='edge', alpha=0.7)
         axs[1].set_ylabel("Traded shares")
         ax2 = axs[1].twinx()
@@ -254,12 +254,13 @@ def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
         ax2.legend(loc='best')
         axs[1].set_xlabel("t")
         ax2.axhline(0, color='black', alpha=0.5)
-        
+
         axs[2].set_ylim((np.nanmin(avgs), np.nanmax(avgs)))
         axs[2].bar(range(len(avgs)), avgs, align='edge', alpha=0.7, label='avg price')
         axs[2].set_ylabel("avg price")
 
         ax4 = axs[2].twinx()
+
         ax4.step(range(len(costs)), np.cumsum(np.array(costs)), where='mid', color='red', alpha=0.6, label='acc costs')
         ax4.step(range(len(costs)), np.cumsum(np.array(costs))/np.cumsum(np.array(traded_volume))*volume, where='mid', color='green', alpha=0.6, label='expected costs')
         ax4.set_ylabel("Costs")
@@ -267,7 +268,7 @@ def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
         ax4.set_xlim((-1,len(timestamps)))
         if vlines is None:
             vlines = [period_length*t for t in range(int(len(episode_windows)/period_length))]
-        axs[2].set_xlabel("actions: {}, costs: {:1.2f}".format(actions, np.array(costs).sum()))
+        axs[2].set_xlabel("actions: {}, limits: {}, costs: {:1.2f}".format(actions, limits, np.nansum(np.array(costs))))
     
     ax.plot(timestamps, center, color='black', label='Center')
     ax.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
@@ -290,22 +291,19 @@ def plot_episode(episode_windows, volume=100, figsize=(8,6), ylim=None,
         volume_fraction = 1.*(i+1)/intervals
         ax.plot(timestamps, price_bid[i], color='green', alpha=volume_fraction)
         ax.plot(timestamps, price_ask[i], color='red', alpha=volume_fraction)
-        
-    title = "'{}' Price comparison for a trade volume of {} shares".format(kind, volume)
+    title = "{}: '{}' Price comparison for a trade volume of {} shares".format(episode_windows[0].timestamp, kind, volume)
 
     if intervals > 1:
         title = "{} (interval size: {})".format(title, 1.*volume/intervals)
-        
+    
     ax.set_title(title)
     if vlines is not None:
         ax.set_xticks([timestamps[vl] for vl in vlines])
     myFmt = mdates.DateFormatter('%H:%M')
     ax.xaxis.set_major_formatter(myFmt)
     ax.set_xlim((timestamps[0] - pd.Timedelta(1, unit='m'), timestamps[-1] + pd.Timedelta(1, unit='m')))
-    print(timestamps[-1] + pd.Timedelta(1, unit='m'), timestamps[-1], pd.Timedelta(1, unit='m'))
-    
     ax.set_ylabel('Price')
-    ax.set_xlabel(episode_windows[0].timestamp)
+    
     if legend:
         ax.legend(loc='best', prop={'size': 6})
     if ylim is not None:
