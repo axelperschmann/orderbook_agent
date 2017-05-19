@@ -25,7 +25,7 @@ class OrderbookTradingSimulator(object):
             return result
         return wrap
 
-    def __init__(self, orderbooks, volume, cash, tradingperiods, consume='volume', period_length=1):
+    def __init__(self, orderbooks, volume, tradingperiods, consume='volume', period_length=1):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         assert len(orderbooks) == tradingperiods*period_length, "Expected len(orderbooks) to equal tradingperiods*period_length, but: {} != {}*{}".format(len(orderbooks), tradingperiods, period_length)
         assert isinstance(volume, (float, int)),  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(volume))
@@ -34,6 +34,7 @@ class OrderbookTradingSimulator(object):
         assert isinstance(period_length, int) and period_length > 0, "Parameter 'period_length' must be 'int', given: {}".format(type(period_length))
 
         if consume=='volume':
+            cash = 0
             if volume > 0:
                 # buy from market
                 self.order_type = 'buy'
@@ -45,6 +46,9 @@ class OrderbookTradingSimulator(object):
             else:
                 raise ValueError("Parameter 'volume' must not be 0, if consume=='volume'!")
         elif consume=='cash':
+            cash = volume
+            volume = 0
+            print("cash, volume", cash, volume)
             if cash > 0:
                 # buy from market
                 self.order_type = 'buy'
@@ -75,7 +79,6 @@ class OrderbookTradingSimulator(object):
             # self.initial_limitAvg = 710  # toDo: remove later. for debugging only
             self.initial_marketShares = orderbooks[0].get_current_sharecount(cash=cash)
             self.initial_limitAvg = cash / self.initial_marketShares
-            print("self.initial_limitAvg", self.initial_limitAvg)
 
         
         # print("initial_marketprice:", self.initial_marketprice)
