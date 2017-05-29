@@ -1,3 +1,5 @@
+import multiprocessing
+
 from tqdm import tqdm, tqdm_notebook
 import pandas as pd
 import numpy as np
@@ -12,163 +14,100 @@ from helper.orderbook_trader import *
 # from agents.NN_Agent import RLAgent_NN
 from agents.BatchTree_Agent import RLAgent_BatchTree
 
-def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, 
-        lim_stepsize=0.1, state_variables=['volume', 'time'], random_start=True,
-        limit_steps=None):
+
+def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, consume='volume',
+        lim_stepsize=0.1, state_variables=['volume', 'time'], random_start=True):
 
     brain = RLAgent_BatchTree(
         actions=actions,
         state_variables=state_variables,
-        V=V, T=T,
+        V=V, T=T, consume=consume,
         period_length=period_length,
         normalized=False,
         lim_stepsize=lim_stepsize,
         limit_base=limit_base,
     )
     print(brain)
+
     for i_window, window in tqdm_notebook(enumerate(orderbooks), leave=False):
-
-        initial_center = window[0].get_center()
-        
-    
-        ots = OrderbookTradingSimulator(orderbooks=window, volume=V,
-                                        tradingperiods=T, period_length=period_length)
-        initial_center = window[0].get_center()
-        lim_increments = initial_center * (brain.lim_stepsize / 100)
-
-        initial_marketprice, initial_limitWorst = window[0].get_current_price(brain.V)
-        initial_limitAvg = initial_marketprice / brain.V
-        market_slippage = initial_limitAvg - initial_center
-        
-        for e in tqdm_notebook(range(epochs)):
-            exploration = max(1.0/2**(e/20), 0.6)
-            print("{}: exploration = {}".format(e, exploration))
-
-            volume = V
-            startpoint = 0
-            if random_start and random.random() < 1.:
-                # randomly start at other states in environment
-                volume = random.randint(1, V)
-                startpoint = random.randint(0, T-1)
-            
-            ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
-
-            if limit_steps is None or not imit_steps:
-                max_steps = T
-            else:
-                max_steps = limit_steps
-
-            for t in range(startpoint, T)[:max_steps]:
-                
-                time_left = T - t
-                timepoint = t*period_length
-                timepoint_next = min((t+1)*period_length, len(window)-1)
-                ob_now = window[timepoint]
-                ob_next = window[timepoint_next]
-                price_incScale = int(ob_now.get_center()/lim_increments)
-                        
-                state = brain.generate_state(time_left=time_left, 
-                                             volume_left=float(ots.volume),
-                                             orderbook=ob_now)
-                
-                action, action_idx = brain.get_action(state, exploration)
-                # for action_idx, action in enumerate(actions):
-                # ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
-
-                if brain.limit_base == 'currAsk':
-                    limit = ob_now.get_ask() * (1. + (action/100.))
-                elif brain.limit_base == 'incStepUnits':
-                    limit = lim_increments * (price_incScale + action)
-                else:
-                    raise NotImplementedError
-
-
-                summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
-                
-                new_state = brain.generate_state(time_left=time_left-1,
-                                                 volume_left=float(ots.volume),
-                                                 orderbook=ob_next)
-
-                cost = ots.history.cost.values[-1]
-
-                # print("{} {:1.2f} {:1.4f} {}".format(state, action, cost, new_state))
-                
-                done = summary['done']
-
-                # brain.append_samples(state, action, action_idx, cost, done, new_state)
-                brain.append_samples(
-                        state=state,
-                        action=action,
-                        action_idx=action_idx,
-                        cost=cost,
-                        timestamp=ob_now.timestamp,
-                        avg=ots.history.avg[-1],
-                        initial_center=initial_center,
-                        new_state=new_state
-                    )
-
+        samples = collect_samples(brain=brain, window=window, epochs=epochs)
+        print(samples.shape)
+        brain.append_samples(new_samples=samples)
 
         brain.fitted_Q_iteration_tree(nb_it=T*2)
 
     print("brain.samples.shape", brain.samples.shape)
     return brain
 
+def collect_samples(brain, window, epochs, random_start=True):
 
-def train_RL(orderbooks, V, T, period_length, epochs, model=None, gamma=0.95, DECAY_RATE=0.005, epsilon=1.,
-             bufferSize=50, batchSize=10, verbose=False, state_variables=['volume', 'time']):
+    ots = OrderbookTradingSimulator(orderbooks=window, volume=brain.V, consume=brain.consume,
+                                    tradingperiods=brain.T, period_length=brain.period_length)
+    lim_increments = ots.initial_center * (brain.lim_stepsize / 100)
+
+    if brain.consume=='volume':
+        initial_marketprice, initial_limitWorst = window[0].get_current_price(volume=brain.V)
+    elif brain.consume=='cash':
+        initial_marketShares, initial_limitWorst = window[0].get_current_sharecount(cash=brain.V)
     
-    tmp = None
-    post_observation = None
-    k = 0
-    actions = list(np.linspace(-0.4, 1.0, num=5))
-    brain = RLAgent_NN(actions=actions, state_variables=state_variables, V=V, T=T, period_length=period_length)
-    
-    for i_window, window in tqdm(enumerate(orderbooks)):
-        ots = OrderbookTradingSimulator(orderbooks=window, volume=V, tradingperiods=T,
-                                                        period_length=period_length)
+    # empty DataFrame to store samples
+    samples = pd.DataFrame([], columns=brain.columns)
+    samples['action_idx'] = samples.action_idx.astype(int)
+
+    for e in tqdm_notebook(range(epochs), leave=False, desc='{} - epochs'.format(window[0].timestamp)):
+        exploration = max(1.0/2**(e/20), 0.6)
+        # print("{}: exploration = {}".format(e, exploration))
+
+        volume = brain.V
+        startpoint = 0
+        if random_start and random.random() < 1.:
+            # randomly start at other states in environment
+            volume = random.randint(1, brain.V)
+            startpoint = random.randint(0, brain.T-1)
+        ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
         
-        for e in tqdm(range(epochs)):
-            print("e", e)
-            volume = V
-            startpoint = 0
-            
-            if random.random() < 0.5:
-                # randomly start at other states in environment
-                volume = random.randint(1, V)
-                startpoint = random.randint(0, T-1)
-            ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
-            exploration = max(1.0/2**(e/2), 0)
-            print("exploration {} = {:1.2f}".format(e, exploration))
-            
-            for step in range(startpoint, T):
-                time_left = T - step
-                timepoint = step*period_length
-                timepoint_next = min((step+1)*period_length, len(window)-1)
-                
-                ob_now = window[timepoint]
-                ob_next = window[timepoint_next]
-                
-                if post_observation is not None:
-                    pre_observation = post_observation
-                if clf is None:
-                    action = random.choice(actions)
-                else:
-                    action = get_action(clf, pre_observation, exploration, env.action_space)
-                print("action: ",action)
-                state = brain.generate_state(time_left=time_left,
-                                         volume_left=volume,
+        for t in range(startpoint, brain.T):
+            time_left = brain.T - t
+
+            ob_now = window[ots.t]
+            ob_next = window[min(ots.t+brain.period_length, len(window)-1)]
+
+            state = brain.generate_state(time_left=time_left, 
+                                         volume_left=ots.get_units_left(),
                                          orderbook=ob_now)
+            
+            action, action_idx = brain.get_action(state, exploration)
 
+            if brain.limit_base == 'currAsk':
                 limit = ob_now.get_ask() * (1. + (action/100.))
-                summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})  #agression_factor=action
+                summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
+            elif brain.limit_base == 'incStepUnits':
+                price_incScale = int(ob_now.get_center()/lim_increments)
+                limit = lim_increments * (price_incScale + action)
+                summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
+            elif brain.limit_base =='agression':
+                summary = ots.trade(agression_factor=action, verbose=False, extrainfo={'ACTION':action})
+            else:
+                raise NotImplementedError
 
-                volume = float(ots.volume)
-                new_state = brain.generate_state(time_left=time_left-1,
-                                                 volume_left=volume,
-                                                 orderbook=ob_next)
-                cost = ots.history.cost.values[-1]
+            new_state = brain.generate_state(time_left=time_left-1,
+                                             volume_left=ots.get_units_left(),
+                                             orderbook=ob_next)
 
-                print("point", get_point(state, action, cost, new_state))
-                
-            #print(info)
-    return brain
+            cost = ots.history.cost.values[-1]
+            
+            new_sample = brain.generate_sample(
+                    state=state,
+                    action=action,
+                    action_idx=action_idx,
+                    cost=cost,
+                    timestamp=ob_now.timestamp,
+                    avg=ots.history.avg[-1],
+                    initial_center=ots.initial_center,
+                    new_state=new_state
+                )
+            samples = pd.concat([samples, new_sample], axis=0, ignore_index=True)
+            
+            if ots.check_is_done():
+                break
+    return samples
