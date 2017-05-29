@@ -23,7 +23,7 @@ from helper.orderbook_trader import OrderbookTradingSimulator
 class RLAgent_Base:
 
     def __init__(self, actions, lim_stepsize, V, T, consume, period_length, samples, agent_name, limit_base,
-                 state_variables=['volume', 'time'], normalized=True):
+                 state_variables=['volume', 'time'], normalized=False):
         self.actions = actions
         self.state_dim = len(state_variables)
         self.action_dim = len(actions)
@@ -47,7 +47,7 @@ class RLAgent_Base:
         return("RL-Type: {}".format(type(self)))
 
     def generate_sample(self, state, action, action_idx, cost, avg, initial_center, timestamp, new_state):
-        return pd.DataFrame([state.tolist() + [round(action, 2)] + [action_idx] + [cost] + [avg] + [initial_center] + [pd.to_datetime(timestamp)] + new_state.tolist()],
+        return pd.DataFrame([state + [round(action, 2)] + [action_idx] + [cost] + [avg] + [initial_center] + [pd.to_datetime(timestamp)] + new_state],
             columns=self.columns)
 
     def append_samples(self, new_samples):
@@ -92,7 +92,7 @@ class RLAgent_Base:
             #else:
             #    raise NotImplemented
 
-        return np.array(state)
+        return list(state)
 
     def get_action_index(self, action):
         action_idx = None
