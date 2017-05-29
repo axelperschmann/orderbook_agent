@@ -12,7 +12,7 @@ from helper.orderbook_trader import OrderbookTradingSimulator
 class RLAgent_BatchTree(RLAgent_Base):
     def __init__(self, actions, lim_stepsize, V, T, consume, period_length, limit_base,
                  model=None, samples=None, agent_name='BatchTree_Agent',
-                 state_variables=['volume', 'time'], normalized=True):
+                 state_variables=['volume', 'time'], normalized=False):
         super().__init__(
             actions=actions,
             lim_stepsize=lim_stepsize,
