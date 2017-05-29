@@ -10,14 +10,15 @@ from helper.orderbook_trader import OrderbookTradingSimulator
 
 
 class RLAgent_BatchTree(RLAgent_Base):
-    def __init__(self, actions, lim_stepsize, V, T, period_length, limit_base, model=None, samples=None,
-                 agent_name='BatchTree_Agent', state_variables=['volume', 'time'],
-                 normalized=True):
+    def __init__(self, actions, lim_stepsize, V, T, consume, period_length, limit_base,
+                 model=None, samples=None, agent_name='BatchTree_Agent',
+                 state_variables=['volume', 'time'], normalized=True):
         super().__init__(
             actions=actions,
             lim_stepsize=lim_stepsize,
             V=V,
             T=T,
+            consume=consume,
             period_length=period_length,
             samples=samples,
             agent_name=agent_name,
@@ -44,12 +45,13 @@ class RLAgent_BatchTree(RLAgent_Base):
             action = self.actions[action_idx]
         else:   
             preds = np.array(self.predict(p_feat))
+
             if which_min == 'first':
                 # if multiple minima exist, choose first one (lowest aggression level)
-                action_idx = np.argmin(preds)
+                action_idx = np.nanargmin(preds)
             elif which_min == 'last':
                 # if multiple minima exist, choose last one (highest aggression level)
-                action_idx = np.where(preds == preds.min())[0][-1]
+                action_idx = np.where(preds == np.nanmin(preds))[0][-1]
             action = self.actions[action_idx]
             
         return action, int(action_idx)
@@ -61,18 +63,18 @@ class RLAgent_BatchTree(RLAgent_Base):
         print("learn")
         raise NotImplementedError    
 
-    def fitted_Q_iteration_tree(self, nb_it, n_estimators=20, max_depth=12):
+    def fitted_Q_iteration_tree(self, nb_it, n_estimators=20, max_depth=12, verbose=False):
         reg = None
         d_rate = 0.95
         df = self.samples.copy()
-        print("samples.shape", df.shape)
-        print("state_dim: ", self.state_dim, self.state_variables)
+
         df.insert(loc=len(df.columns)-self.state_dim, column='done', value=abs(df['volume_n']) < 0.00001)
         df.insert(loc=len(df.columns)-self.state_dim, column='min_cost', value=df['cost'])
         df['min_cost'] = df['cost']
 
-        for n in tqdm_notebook(range(nb_it)):
-            print("n", n)
+        for n in tqdm(range(nb_it)):
+            if verbose:
+                print("n", n)
 
             # training an estimate of q_1
             if reg is not None:
@@ -92,8 +94,9 @@ class RLAgent_BatchTree(RLAgent_Base):
                 
             reg = RandomForestRegressor(n_estimators=20, max_depth=max_depth)
             reg = reg.fit(df[self.state_variables+['action']], df['min_cost'])
-            print("Score:", reg.score(df[self.state_variables+['action']], df['min_cost']))
-            print("Feature importances:", reg.feature_importances_)
+            if verbose:
+                print("Score:", reg.score(df[self.state_variables+['action']], df['min_cost']))
+                print("Feature importances:", reg.feature_importances_)
             self.model = reg
 
             #self.heatmap_Q(show_traces=False, show_minima_count=True, vol_intervals=10)
@@ -111,7 +114,7 @@ class RLAgent_BatchTree(RLAgent_Base):
                 q = np.array(self.predict(state))
 
                 action, action_idx = self.get_action(state, exploration=0, which_min=which_min)
-                minima_count = len(np.where(q == q.min())[0])
+                minima_count = len(np.where(q == np.nanmin(q))[0])
                 
                 # if (t, v) in [(1,100), (3,10), (4,10), (2,10), (1,10)]:
                 #     print("t{}, v{}  -  action: #{}={:1.1f}".format(t,v, np.nanargmin(q), action))

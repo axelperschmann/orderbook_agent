@@ -1,3 +1,4 @@
+from joblib import Parallel, delayed
 import multiprocessing
 
 from tqdm import tqdm, tqdm_notebook
@@ -14,10 +15,23 @@ from helper.orderbook_trader import *
 # from agents.NN_Agent import RLAgent_NN
 from agents.BatchTree_Agent import RLAgent_BatchTree
 
+from functools import wraps
+from time import time
 
+def timing(f):
+    @wraps(f)
+    def wrap(*args, **kw):
+        ts = time()
+        result = f(*args, **kw)
+        te = time()
+        print('func:%r took: %2.4f sec' % \
+          (f.__name__, te-ts))
+        return result
+    return wrap
+
+#@timing
 def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, consume='volume',
         lim_stepsize=0.1, state_variables=['volume', 'time'], random_start=True):
-
     brain = RLAgent_BatchTree(
         actions=actions,
         state_variables=state_variables,
@@ -29,18 +43,21 @@ def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, consum
     )
     print(brain)
 
-    for i_window, window in tqdm_notebook(enumerate(orderbooks), leave=False):
-        samples = collect_samples(brain=brain, window=window, epochs=epochs)
-        print(samples.shape)
-        brain.append_samples(new_samples=samples)
+    num_cores = multiprocessing.cpu_count()
+    print("Start parallel collection of samples in forward mode (num_cores={})".format(num_cores))
+    results = Parallel(n_jobs=num_cores, verbose=5)(delayed(collect_samples_forward)(brain=brain, window=window, epochs=epochs) for window in orderbooks)
+    
+    new_samples = pd.concat(results, axis=0, ignore_index=True)
 
-        brain.fitted_Q_iteration_tree(nb_it=T*2)
+    brain.append_samples(new_samples=new_samples)
+
+    print("brain.fitted_Q_iteration_tree()")
+    brain.fitted_Q_iteration_tree(nb_it=T*2, verbose=False)
 
     print("brain.samples.shape", brain.samples.shape)
     return brain
 
-def collect_samples(brain, window, epochs, random_start=True):
-
+def collect_samples_forward(brain, window, epochs, random_start=True):
     ots = OrderbookTradingSimulator(orderbooks=window, volume=brain.V, consume=brain.consume,
                                     tradingperiods=brain.T, period_length=brain.period_length)
     lim_increments = ots.initial_center * (brain.lim_stepsize / 100)
@@ -54,7 +71,7 @@ def collect_samples(brain, window, epochs, random_start=True):
     samples = pd.DataFrame([], columns=brain.columns)
     samples['action_idx'] = samples.action_idx.astype(int)
 
-    for e in tqdm_notebook(range(epochs), leave=False, desc='{} - epochs'.format(window[0].timestamp)):
+    for e in range(epochs):
         exploration = max(1.0/2**(e/20), 0.6)
         # print("{}: exploration = {}".format(e, exploration))
 
