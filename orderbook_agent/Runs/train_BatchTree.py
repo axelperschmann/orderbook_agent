@@ -37,7 +37,6 @@ def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, consum
         state_variables=state_variables,
         V=V, T=T, consume=consume,
         period_length=period_length,
-        normalized=False,
         lim_stepsize=lim_stepsize,
         limit_base=limit_base,
     )
@@ -45,8 +44,8 @@ def trainer(orderbooks, V, T, period_length, actions, limit_base, epochs, consum
 
     num_cores = multiprocessing.cpu_count()
     print("Start parallel collection of samples in forward mode (num_cores={})".format(num_cores))
-    results = Parallel(n_jobs=num_cores, verbose=5)(delayed(collect_samples_forward)(brain=brain, window=window, epochs=epochs) for window in orderbooks)
     
+    results = Parallel(n_jobs=num_cores, verbose=10)(delayed(collect_samples_forward)(brain=brain, window=window, epochs=epochs) for window in orderbooks)
     new_samples = pd.concat(results, axis=0, ignore_index=True)
 
     brain.append_samples(new_samples=new_samples)
@@ -71,7 +70,7 @@ def collect_samples_forward(brain, window, epochs, random_start=True):
     samples = pd.DataFrame([], columns=brain.columns)
     samples['action_idx'] = samples.action_idx.astype(int)
 
-    for e in range(epochs):
+    for e in tqdm(range(epochs)):
         exploration = max(1.0/2**(e/20), 0.6)
         # print("{}: exploration = {}".format(e, exploration))
 
@@ -79,7 +78,7 @@ def collect_samples_forward(brain, window, epochs, random_start=True):
         startpoint = 0
         if random_start and random.random() < 1.:
             # randomly start at other states in environment
-            volume = random.randint(1, brain.V)
+            # volume = random.randint(1, brain.V)
             startpoint = random.randint(0, brain.T-1)
         ots.reset(custom_starttime=startpoint, custom_startvolume=volume)
         
