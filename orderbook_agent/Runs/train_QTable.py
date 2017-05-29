@@ -18,7 +18,8 @@ from datetime import datetime
 import fire
 from IPython.display import display
 
-def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_intervals, actions, lim_stepsize,
+def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_intervals, actions,
+                     lim_stepsize, consume='volume',
                      verbose=True, state_variables=['volume', 'time'], limit_base='curr_ask',
                      outfile_agent=None, outfile_samples=None,
                      normalized=False, interpolate_vol=False):
@@ -27,7 +28,7 @@ def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_interval
         actions=actions,
         lim_stepsize=lim_stepsize,
         state_variables=state_variables,
-        V=V, T=T,
+        V=V, T=T, consume=consume,
         period_length=period_length,
         vol_intervals=vol_intervals,
         normalized=normalized,
@@ -35,24 +36,29 @@ def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_interval
         limit_base=limit_base
     )
     print(brain)
+    initial_cash = V
     limits = []
-    for tt in tqdm(range(T)[::-1]):
+    for tt in tqdm_notebook(range(T)[::-1], desc='timepoints'):
         timepoint = period_length*tt
         timepoint_next = min((tt+1)*period_length, (period_length*T)-1)
         time_left = T-tt
         print("time_left", time_left)
 
-        for w, window in tqdm(enumerate(traingdata)):
+        for w, window in tqdm_notebook(enumerate(traingdata), desc='tradingperiods', leave=False):
             ots = OrderbookTradingSimulator(orderbooks=window,
-                                            volume=V, tradingperiods=T,
+                                            volume=V, consume=consume, tradingperiods=T,
                                             period_length=period_length)
 
             initial_center = window[0].get_center()
             lim_increments = initial_center * (brain.lim_stepsize / 100)
 
-            initial_marketprice, initial_limitWorst = window[0].get_current_price(brain.V)
-            initial_limitAvg = initial_marketprice / brain.V
-            market_slippage = initial_limitAvg - initial_center
+            if consume=='volume':
+                initial_marketprice, initial_limitWorst = window[0].get_current_price(volume=brain.V)
+                initial_limitAvg = initial_marketprice / brain.V
+                market_slippage = initial_limitAvg - initial_center
+            elif consume=='cash':
+                initial_marketShares = window[0].get_current_sharecount(cash=brain.V)
+                initial_limitAvg = brain.V / initial_marketShares
             #print("V", brain.V, initial_limitAvg)
             
             ob_now = window[timepoint]
@@ -63,8 +69,7 @@ def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_interval
 
             ask = ob_now.get_ask()
             
-            for vol in brain.volumes:
-                
+            for vol in tqdm_notebook(brain.volumes, desc='volumes', leave=False):
                 # # exceptionally do also sample volumes other than 100% at t=0,
                 # # since we want to collect as many samples as possible
                 if tt == 0 and vol != V:
@@ -75,9 +80,8 @@ def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_interval
                                              volume_left=vol,
                                              orderbook=ob_now)
                 
-                for action_idx, a in enumerate(actions):
+                for action_idx, a in tqdm_notebook(enumerate(actions), desc='actions', leave=False):
                     ots.reset(custom_starttime=tt, custom_startvolume=vol)
-                    
                     # limit = ask * (1. + (a/100.))
                     #limit = initial_center * (1. + (a/100.))
                     #limit = initial_center + (a*lim_increments)
@@ -90,21 +94,33 @@ def optimal_strategy_fixedStepsize(traingdata, V, T, period_length, vol_interval
                     else:
                         summary = ots.trade(limit=limit, extrainfo={'ACTION':a})  # agression_factor=a)
 
-                    volume_left = ots.volume
-                    volume_traded = ots.history.volume_traded.values[-1]
+                    if consume=='volume':
+                        volume_left = ots.volume
+                        volume_traded = ots.history.volume_traded.values[-1]
+                    elif consume=='cash':
+                        volume_left = ots.cash
+                        volume_traded = ots.history.cash_traded.values[-1]
+                    
                     cost = ots.history.cost[-1]
                     new_state = brain.generate_state(time_left=time_left-1,
                                                      volume_left=volume_left, #_rounded,
                                                      orderbook=ob_next)
-
+                    
                     # discrete lookup table needs discretized/rounded states
                     volume_left_rounded = round_custombase(volume_left, base=brain.volumes_base)
                     volume_traded_rounded = round_custombase(volume_traded, base=brain.volumes_base)
                     assert volume_left + volume_traded_rounded - vol*V <= 1.e-8, "{} {} {} {}".format(volume_left, volume_traded_rounded, vol, V)
-
+                    
                     avg = ots.history.avg[-1]
 
-                    cost_rounded =  volume_traded_rounded * ((avg - initial_center) / market_slippage)
+                    if consume=='volume':
+                        cost_rounded =  volume_traded_rounded * ((avg - initial_center) / market_slippage)
+                    elif consume=='cash':
+                        percentage = volume_traded_rounded / volume_traded
+                        
+                        extra_shares = ots.history.extra_shares.values[-1] * percentage
+                        
+                        cost_rounded = -extra_shares * avg
                     #print(time_left, vol, a, limit)
                     #print("volume vs rounded", volume_traded, volume_traded_rounded)
                     #print("cost vs rounded  ", cost, cost_rounded)

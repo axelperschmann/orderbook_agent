@@ -48,7 +48,6 @@ class OrderbookTradingSimulator(object):
         elif consume=='cash':
             cash = volume
             volume = 0
-            print("cash, volume", cash, volume)
             if cash > 0:
                 # buy from market
                 self.order_type = 'buy'
@@ -77,7 +76,7 @@ class OrderbookTradingSimulator(object):
             self.market_slippage = self.initial_limitAvg - self.initial_center
         elif consume=='cash':
             # self.initial_limitAvg = 710  # toDo: remove later. for debugging only
-            self.initial_marketShares = orderbooks[0].get_current_sharecount(cash=cash)
+            self.initial_marketShares, limit = orderbooks[0].get_current_sharecount(cash=cash)
             self.initial_limitAvg = cash / self.initial_marketShares
 
         
@@ -88,6 +87,14 @@ class OrderbookTradingSimulator(object):
         self.timestamps = [ob.timestamp for ob in orderbooks]
 
         self.reset()
+
+    def get_units_left(self):
+        if self.consume=='volume':
+            return float(self.volume)
+        elif self.consume=='cash':
+            return float(self.cash)
+        else:
+            raise NotImplementedError
         
     def reset(self, custom_starttime=None, custom_startvolume=None, simulate_preceeding_trades=False):
         assert (isinstance(custom_starttime, int) and custom_starttime >= 0 and custom_starttime*self.period_length < self.timespan) or custom_starttime is None, "Parameter 'custom_starttime' [if provided] must be an 'int' and between 0 and T-1"
@@ -113,14 +120,18 @@ class OrderbookTradingSimulator(object):
         self.buy_history = pd.DataFrame({'Amount' : []})
         
         self.history = pd.DataFrame([])
-        self.summary = {'traded': 0, 'cash_traded':0, 'cost':0, 'done':False} # 'remaining': self.initial_volume,
+        self.summary = {'volume_traded': 0, 'cash_traded':0, 'cost':0, 'done':False} # 'remaining': self.initial_volume,
         if self.consume=='cash':
             self.summary['extra_shares'] = 0
 
         self.volume =  self.initial_volume
         self.cash = self.initial_cash
         if custom_startvolume is not None:
-            self.volume = custom_startvolume
+            if self.consume=='volume':
+                self.volume = custom_startvolume
+            elif self.consume=='cash':
+                self.volume = 0
+                self.cash = custom_startvolume
 
             if simulate_preceeding_trades and custom_startvolume != self.initial_volume:
                 # adapt masterbook to simulate preceeding trades
@@ -257,7 +268,6 @@ class OrderbookTradingSimulator(object):
                 info.CENTER = ob.get_center()
 
                 if agression_factor is not None:
-
                     if self.order_type == 'buy':
                         best_price = ob.get_ask()
 
@@ -268,17 +278,13 @@ class OrderbookTradingSimulator(object):
                         # do not trade
                         limit=0
                     else:
-                        current_price, limit = ob.get_current_price(self.volume*agression_factor)
-        
-                    # current_price, max_limit = self.orderbooks[self.t].get_current_price(self.volume)
-                    #print(current_price, max_limit)
-                    #limit_gap = max_limit - best_price
-                    #limit = best_price + limit_gap * agression_factor
-                    # limit = max_limit
-                    #print(best_price, current_price, max_limit, agression_factor, limit)
+                        if self.consume=='volume':
+                            current_price, limit = ob.get_current_price(volume=self.get_units_left()*agression_factor)
+                        elif self.consume=='cash':
+                            current_shares, limit = ob.get_current_sharecount(cash=self.get_units_left()*agression_factor)
+                            #current_shares, limit = self.orderbooks[self.t].get_current_sharecount(cash=self.get_units_left()*agression_factor)
 
-                    info['LIMIT'] = limit          
-                    # info['LIMIT_MAX'] = max_limit
+                    info['LIMIT'] = limit
             
             if self.t == self.timespan-1:
                 # must sell all remaining shares. Place Market Order!
@@ -337,13 +343,15 @@ class OrderbookTradingSimulator(object):
                 cash_percentage = (abs(self.history.cash_traded.values[-1]) / self.initial_cash)
                 
                 extra_shares = round((self.history.volume_traded.values[-1] - (self.initial_marketShares * cash_percentage)), PRECISION)
-                cost = -extra_shares * self.history.avg.values[-1]
+                cost = -extra_shares * self.initial_center
+
                 self.history.loc[timestamp, 'cost'] = cost
                 self.history.loc[timestamp, 'extra_shares'] = extra_shares
                 info['extra_shares'] = extra_shares
                 self.summary['extra_shares'] += info.extra_shares.values[0]
+                
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
-            self.summary['traded'] += info.volume_traded.values[0]
+            self.summary['volume_traded'] += info.volume_traded.values[0]
             self.summary['cash_traded'] += info.cash_traded.values[0]
             
         if verbose:
@@ -354,15 +362,15 @@ class OrderbookTradingSimulator(object):
 
                 print("t={}: Traded {}, {:.4f} shares left".format(self.t-1, traded, self.volume))
 
-        if self.check_is_done():
-            timestamp = self.timestamps[self.t-1]
-        
-            info_final = pd.DataFrame(data={
-                                      'VOLUME': self.volume,
-                                      'CASH': self.cash},
-                                index=[timestamp])
-
-            self.history = self.history.append(info_final, ignore_index=False)
+        # if self.check_is_done():
+        #     timestamp = self.timestamps[self.t-1]
+        # 
+        #     info_final = pd.DataFrame(data={
+        #                               'VOLUME': self.volume,
+        #                               'CASH': self.cash},
+        #                         index=[timestamp])
+        # 
+        #     self.history = self.history.append(info_final, ignore_index=False)
         return self.summary
 
     def perform_trade_wrapper(self, orderbook, *, limit=None, simulation=False):
@@ -386,12 +394,12 @@ class OrderbookTradingSimulator(object):
             # buy from market
             orders = orderbook.asks.copy()
             if limit is not None:
-                orders = orders[orders.index <= limit]
+                orders = orders[orders.index <= limit].copy()
         elif self.order_type=='sell':
             # sell to market
             orders = orderbook.bids.copy()
             if limit is not None:
-                orders = orders[orders.index >= limit]
+                orders = orders[orders.index >= limit].copy()
 
         orders['Volume'] = orders.index * orders.Amount
         if self.consume=='volume':

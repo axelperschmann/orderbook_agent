@@ -91,7 +91,7 @@ class OrderbookContainer(object):
             orders = self.bids
             orderdirection = -1
         orders['Volume'] = orders.Amount * orders.index
-        assert cash < orders.Volume.sum(), "Can't handle trade. Orderbookvolume exceeded {} vs {}".format(orders.Volume.sum(), cash)
+        assert cash < orders.Volume.sum(), "Can't handle trade. Orderbookvolume exceeded NOT({} < {})".format(cash, orders.Volume.sum())
         
         accVol = orders.Volume.cumsum()
         fast_items = len(accVol[accVol < abs(cash)].index)
@@ -103,17 +103,20 @@ class OrderbookContainer(object):
         
         for pos in range(fast_items, len(orders)):
             order = orders.iloc[pos]
-            price = order.name
+            order_price = order.name
 
             if abs(cash) - order.Volume >= 0:
                 current_order_volume = order.Volume/order.name
             else:
                 current_order_volume = cash/order.name
 
-            cash -= current_order_volume * price * orderdirection
+            cash -= current_order_volume * order_price * orderdirection
             shares += current_order_volume
+            if abs(cash) == 0:
+                break
+        limit = order_price
         
-        return shares
+        return shares, limit
         
     def get_current_price(self, volume):
         assert isinstance(volume, (int, float)) and volume != 0, "'volume' must not be 0"
@@ -127,7 +130,7 @@ class OrderbookContainer(object):
             orderdirection = -1
             # volume = abs(volume)
         
-        assert volume < orders.Amount.sum(), "Can't handle trade. Orderbookvolume exceeded {} vs {}".format(orders.Amount.sum(), volume)
+        assert volume < orders.Amount.sum(), "Can't handle trade. Orderbookvolume exceeded: NOT({} < {})".format(volume, orders.Amount.sum())
             
         for row in orders.itertuples():
             order_price = row[0]

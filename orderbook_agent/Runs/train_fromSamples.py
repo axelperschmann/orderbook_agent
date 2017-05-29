@@ -14,13 +14,13 @@ from agents.BatchTree_Agent import RLAgent_BatchTree
 from helper.Q_learning import round_custombase
 
 
-def train_BatchTree_fromSamples(df, V, T, period_length, vol_intervals, actions,
+def train_BatchTree_fromSamples(df, V, T, consume, period_length, vol_intervals, actions,
                                 state_variables, normalized=False, interpolate_vol=False,
                                 n_estimators=20, max_depth=12, limit_base='incStepUnits'):
     brain = RLAgent_BatchTree(
         actions=actions,
         state_variables=state_variables,
-        V=V, T=T,
+        V=V, T=T, consume=consume,
         period_length=period_length,
         normalized=False,
         lim_stepsize=0.1,
@@ -34,13 +34,13 @@ def train_BatchTree_fromSamples(df, V, T, period_length, vol_intervals, actions,
     
     return brain
 
-def train_Qtable_fromSamples(samples, V, T, period_length, vol_intervals, actions,
+def train_Qtable_fromSamples(samples, V, T, consume, period_length, vol_intervals, actions,
                              state_variables=['volume', 'time'],
                              normalized=False, interpolate_vol=False):
     brain = QTable_Agent(
         actions=actions,
         state_variables=state_variables,
-        V=V, T=T,
+        V=V, T=T, consume=consume,
         period_length=period_length,
         vol_intervals=vol_intervals,
         normalized=normalized,

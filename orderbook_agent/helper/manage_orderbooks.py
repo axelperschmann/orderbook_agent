@@ -216,7 +216,7 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
     
     if limits is not None:
         ax.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
-        ots = OrderbookTradingSimulator(orderbooks=episode_windows, volume=volume, consume=consume, cash=0, tradingperiods=len(limits),
+        ots = OrderbookTradingSimulator(orderbooks=episode_windows, volume=volume, consume=consume, tradingperiods=len(limits),
                                              period_length=period_length)
 
         traded_volume = []

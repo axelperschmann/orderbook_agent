@@ -8,9 +8,16 @@ from IPython.display import display
 
 from .RL_Agent_Base import RLAgent_Base
 
+def safe_list_get(l, idx, default):
+    try:
+        return l[idx]
+    except IndexError:
+        return default
+
 class QTable_Agent(RLAgent_Base):
 
-    def __init__(self, actions, lim_stepsize, vol_intervals, limit_base, V=100, T=4, period_length=15, samples=None,
+    def __init__(self, actions, lim_stepsize, vol_intervals, limit_base, V=100, T=4, consume='volume',
+                 period_length=15, samples=None,
                  agent_name='QTable_Agent', state_variables=['volume', 'time'],
                  normalized=True, interpolate_vol=False):
         super().__init__(
@@ -18,6 +25,7 @@ class QTable_Agent(RLAgent_Base):
             lim_stepsize=lim_stepsize,
             V=V,
             T=T,
+            consume=consume,
             period_length=period_length,
             samples=samples,
             agent_name=agent_name,
@@ -49,6 +57,7 @@ class QTable_Agent(RLAgent_Base):
                'vol_intervals': self.vol_intervals,
                'T': self.T,
                'V': self.V,
+               'consume': self.consume,
                'period_length': self.period_length,
                # 'samples': self.samples,
                'agent_name': self.agent_name,
@@ -76,10 +85,11 @@ class QTable_Agent(RLAgent_Base):
         
         ql = QTable_Agent(
             actions=data['actions'],
-            lim_stepsize=data.get('lim_stepsize', 0.1),
+            lim_stepsize=safe_list_get(data, idx='lim_stepsize', default=0.1),
             vol_intervals=data['vol_intervals'],
             T=data['T'],
             V=data['V'],
+            consume=safe_list_get(data, idx='consume', default='volume'),
             period_length=data['period_length'],
             agent_name=data['agent_name'],
             state_variables=data['state_variables'] or ['volume', 'time'],
@@ -223,10 +233,10 @@ class QTable_Agent(RLAgent_Base):
         
         if which_min == 'first':
             # if multiple minima exist, choose first one (lowest aggression level)
-            action_idx = q.argmin()
+            action_idx = np.nanargmin(q)
         elif which_min == 'last':
             # if multiple minima exist, choose last one (highest aggression level)
-            action_idx = np.where(q == q.min())[0][-1]
+            action_idx = np.where(q == np.nanmin(q))[0][-1]
 
         return self.actions[action_idx], action_idx
 
@@ -253,8 +263,8 @@ class QTable_Agent(RLAgent_Base):
                 
                 if not np.all([math.isnan(val) for val in q]):
                     action, action_idx = self.get_action(state, exploration=0, which_min=which_min)
-                    minima_count = len(np.where(q == q.min())[0])
-                    
+                    minima_count = len(np.where(q == np.nanmin(q))[0])
+
                     df_tmp = pd.DataFrame({'time': t,
                                            'volume': v,
                                            'q': np.nanmin(q),
