@@ -10,8 +10,8 @@ from helper.orderbook_trader import OrderbookTradingSimulator
 
 
 class RLAgent_BatchTree(RLAgent_Base):
-    def __init__(self, actions, lim_stepsize, V, T, consume, period_length, limit_base,
-                 model=None, samples=None, agent_name='BatchTree_Agent',
+    def __init__(self, actions, V, T, consume, period_length, limit_base,
+                 model=None, samples=None, agent_name='BatchTree_Agent', lim_stepsize=0.1,
                  state_variables=['volume', 'time'], normalized=False):
         super().__init__(
             actions=actions,
@@ -37,12 +37,11 @@ class RLAgent_BatchTree(RLAgent_Base):
 
         return preds
 
-    def get_action(self, p_feat, exploration=0, which_min='first'):
+    def get_action(self, p_feat, which_min='first'):
         assert isinstance(which_min, str) and which_min in ['first', 'last']
-        
-        if self.model is None or random.random() < exploration:
+
+        if self.model is None:
             action_idx = random.randint(0, len(self.actions)-1)
-            action = self.actions[action_idx]
         else:   
             preds = np.array(self.predict(p_feat))
 
@@ -52,9 +51,8 @@ class RLAgent_BatchTree(RLAgent_Base):
             elif which_min == 'last':
                 # if multiple minima exist, choose last one (highest aggression level)
                 action_idx = np.where(preds == np.nanmin(preds))[0][-1]
-            action = self.actions[action_idx]
             
-        return action, int(action_idx)
+        return self.actions[action_idx], action_idx
         
     def learn(self, state, action, cost, new_state):
         '''
@@ -113,7 +111,7 @@ class RLAgent_BatchTree(RLAgent_Base):
 
                 q = np.array(self.predict(state))
 
-                action, action_idx = self.get_action(state, exploration=0, which_min=which_min)
+                action, action_idx = self.get_action(state, which_min=which_min)
                 minima_count = len(np.where(q == np.nanmin(q))[0])
                 
                 # if (t, v) in [(1,100), (3,10), (4,10), (2,10), (1,10)]:

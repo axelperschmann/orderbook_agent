@@ -3,21 +3,18 @@ import pandas as pd
 import json
 import math
 import random
-
+import os
+from tqdm import tqdm, tqdm_notebook
 from IPython.display import display
 
 from .RL_Agent_Base import RLAgent_Base
+from helper.general_helpers import safe_list_get
 
-def safe_list_get(l, idx, default):
-    try:
-        return l[idx]
-    except IndexError:
-        return default
 
 class QTable_Agent(RLAgent_Base):
 
-    def __init__(self, actions, lim_stepsize, vol_intervals, limit_base, V=100, T=4, consume='volume',
-                 period_length=15, samples=None,
+    def __init__(self, actions, vol_intervals, limit_base, V=100, T=4, consume='volume',
+                 period_length=15, samples=None, lim_stepsize=0.1,
                  agent_name='QTable_Agent', state_variables=['volume', 'time'],
                  normalized=True, interpolate_vol=False):
         super().__init__(
@@ -42,9 +39,17 @@ class QTable_Agent(RLAgent_Base):
         self.n = {}  # n is the number of times we have tried an action in a state
 
 
-    def save(self, outfile_agent, outfile_samples):
+    def save(self, path=".", outfile_agent=None, outfile_samples=None, overwrite=False):
+        if outfile_agent is None:
+            outfile_agent = self.agent_name
+        if outfile_samples is None:
+            outfile_samples = self.agent_name
+
+        # append file type
         if outfile_agent.split(".")[-1] != 'json':
             outfile_agent = '{}.json'.format(outfile_agent)
+        if outfile_samples.split(".")[-1] != 'csv':
+                outfile_samples = '{}.csv'.format(outfile_samples)
 
         puffer_q = {}
         puffer_n = {}
@@ -68,16 +73,25 @@ class QTable_Agent(RLAgent_Base):
                'q': puffer_q,
                'n': puffer_n}
 
+        if not os.path.exists(path):
+            os.makedirs(path)
+
         # save agent to disk
-        with open(outfile_agent, 'w') as f_out:
-            f_out.write(json.dumps(obj, default=lambda df: json.loads(df.to_json())) + "\n")
-        print("Saved agent: '{}'".format(outfile_agent))
+        outfile_agent = os.path.join(path, outfile_agent)
+        if os.path.isfile(outfile_agent) and overwrite is False:
+            print("File '{}' exists! Do not overwrite!".format(outfile_agent))
+        else:
+            with open(outfile_agent, 'w') as f_out:
+                f_out.write(json.dumps(obj, default=lambda df: json.loads(df.to_json())) + "\n")
+            print("Saved agent: '{}'".format(outfile_agent))
 
         # save samples to disk
-        if outfile_samples.split(".")[-1] != 'csv':
-            outfile_samples = '{}.csv'.format(outfile_samples)
-        self.samples.to_csv(outfile_samples)
-        print("Saved samples: '{}'".format(outfile_samples))
+        outfile_samples = os.path.join(path, outfile_samples)
+        if os.path.isfile(outfile_samples) and overwrite is False:
+            print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+        else:
+            self.samples.to_csv(outfile_samples)
+            print("Saved samples: '{}'".format(outfile_samples))
 
     def load(infile_agent, infile_samples):
         with open(infile_agent, 'r') as f:
@@ -108,12 +122,52 @@ class QTable_Agent(RLAgent_Base):
 
         return ql
 
-    def generate_state(self, time_left, volume_left, orderbook=None):
-        '''
-        returns a string version of the state
-        '''
+    def learn_fromSamples(self, reset_brain=True):
+        if reset_brain:
+            self.q = {}
+            self.n = {}
 
-        return (super().generate_state(time_left=time_left, volume_left=volume_left, orderbook=orderbook))
+        for tt in tqdm(range(self.T)[::-1]):
+            time_left = self.T-tt
+            
+            df_sub = self.samples[self.samples.time==time_left]
+            
+            for idx, row in enumerate(df_sub.iterrows()):
+                sample = row[1]
+
+                state = sample[self.state_variables].copy()
+                state['volume'] = self.round_custombase(state.volume)
+                # print("vol", state.values)
+                if self.normalized:
+                    state['volume'] = state['volume'] / self.V
+                    state['time'] = state['time'] / self.T
+                state = list(state.values)
+                
+                new_state = sample[["{}_n".format(var) for var in self.state_variables]]
+                new_state['volume_n'] = self.round_custombase(new_state.volume_n)
+                if self.normalized:
+                    new_state['volume_n'] = new_state['volume_n'] / self.V
+                    new_state['time_n'] = new_state['time_n'] / self.T
+
+                new_state = list(new_state.values)
+
+                volume_traded = sample.volume-sample.volume_n
+                volume_traded_rounded = self.round_custombase(volume_traded)
+
+                if volume_traded == 0:
+                    cost = 0
+                else:
+                    cost = sample.cost / volume_traded * volume_traded_rounded
+
+                # print("{}   {:1.2f}, {:1.4f}   {}".format(state, sample.action, cost, new_state))
+                self.learn(state=state, action=sample.action, cost=cost, new_state=new_state)
+
+    def generate_state(self, time_left, volume_left, round_vol=False, orderbook=None, orderbook_cheat=None, extra_variables=None):
+        if round_vol:  # ToDo: Remove end of line: and not self.interpolate_vol:
+            # round volume for proper Table Lookup
+            volume_left = self.round_custombase(volume_left, non_zero=True)
+
+        return (super().generate_state(time_left=time_left, volume_left=volume_left, orderbook=orderbook, orderbook_cheat=orderbook_cheat, extra_variables=extra_variables))
 
     def _get_nearest_neighbours(self, state, variable='volume'):
         assert isinstance(variable, str) and variable in ['volume']
@@ -150,7 +204,6 @@ class QTable_Agent(RLAgent_Base):
 
     def predict(self, state, action=None):
         Q_values = self.q.get(str(state), np.full(self.action_dim, np.nan))  # np.zeros(self.action_dim))
-
         if self.interpolate_vol:
             
             if str(state) not in self.q.keys():
@@ -221,7 +274,7 @@ class QTable_Agent(RLAgent_Base):
 
             self.n[str(state)][action_idx] = n + 1
 
-    def get_action(self, state, exploration=0, which_min='first'):
+    def get_action(self, state, which_min='first'):
         assert isinstance(which_min, str) and which_min in ['first', 'last']
 
         q = np.array(self.predict(state))
@@ -242,27 +295,29 @@ class QTable_Agent(RLAgent_Base):
 
     def round_custombase(self, val, non_zero=False):
         rounded_volume = round(val / self.volumes_base) * self.volumes_base
+        
         if non_zero:
             return max(rounded_volume, self.volumes_base)
         return rounded_volume
 
-    def sample_from_Q(self, vol_intervals, which_min):
-        assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
+    def sample_from_Q(self, vol_intervals, which_min, extra_variables=None):
+        # assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
         
         if self.interpolate_vol:
             volumes = np.linspace(self.V, 0, num=vol_intervals+1)[:-1] 
         else:
             volumes = self.volumes
+
         df = pd.DataFrame([], columns=self.state_variables)
         for t in range(1, self.T+1):
             for v in volumes:
+
                 state = self.generate_state(time_left=t,
-                                            volume_left=v)
-                
+                                            volume_left=v,
+                                            extra_variables=extra_variables)
                 q = np.array(self.predict(state))
-                
                 if not np.all([math.isnan(val) for val in q]):
-                    action, action_idx = self.get_action(state, exploration=0, which_min=which_min)
+                    action, action_idx = self.get_action(state, which_min=which_min)
                     minima_count = len(np.where(q == np.nanmin(q))[0])
 
                     df_tmp = pd.DataFrame({'time': t,

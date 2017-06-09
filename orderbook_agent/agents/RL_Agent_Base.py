@@ -13,11 +13,19 @@ from IPython.display import display, clear_output
 import os
 from tqdm import tqdm, tqdm_notebook
 
+from helper.collect_samples import collect_samples_forward, collect_samples_backward
+
 
 import sys
 sys.path.append('..')
 from helper.orderbook_container import OrderbookContainer
 from helper.orderbook_trader import OrderbookTradingSimulator
+
+def unwrap_collect_samples_forward(**kwarg):
+    return collect_samples_forward(**kwarg)
+
+def unwrap_collect_samples_backward(**kwarg):
+    return collect_samples_backward(**kwarg)
 
 
 class RLAgent_Base:
@@ -53,13 +61,31 @@ class RLAgent_Base:
     def append_samples(self, new_samples):
         self.samples = pd.concat([self.samples, new_samples], axis=0, ignore_index=True)
 
+    def collect_samples_parallel(self, orderbooks, epochs=20, guiding_agent=None, random_start=False, exploration=0, mode='forward', append=True):
+        assert isinstance(mode, str) and mode in ['forward', 'backward'], "Unknown sample collection mode: '{}'".format(mode)
+        num_cores = multiprocessing.cpu_count()
+        
+        print("Start parallel collection of samples in '{}' mode (num_cores={})".format(mode, num_cores))
+
+        if mode=='forward':
+            results = Parallel(n_jobs=num_cores, verbose=10)(delayed(unwrap_collect_samples_forward)(
+                                                                brain=self, window=window, epochs=epochs, guiding_agent=guiding_agent, random_start=random_start, exploration=exploration) 
+                                                                    for window in orderbooks)
+        elif mode=='backward':
+            results = Parallel(n_jobs=num_cores, verbose=10)(delayed(unwrap_collect_samples_backward)(
+                                                                brain=self, window=window) 
+                                                                    for window in orderbooks)
+
+        self.append_samples(new_samples=pd.concat(results, axis=0, ignore_index=True))
+
+
     def save(self, outfile, outfile_samples):
         raise NotImplementedError
 
     def load(infile_agent, infile_samples):
         raise NotImplementedError
     
-    def generate_state(self, time_left, volume_left, orderbook=None):  
+    def generate_state(self, time_left, volume_left, orderbook=None, orderbook_cheat=None, extra_variables=None):  
         assert isinstance(time_left, (int, float)), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
         assert isinstance(volume_left, (int, np.int64, float, np.float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
         assert (type(orderbook).__name__ == OrderbookContainer.__name__) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
@@ -69,21 +95,39 @@ class RLAgent_Base:
 
         state = []
         for feat in self.state_variables:
+            if (extra_variables is not None) and feat in extra_variables:
+                # useful if we want to plot heatmap for agents with more than 2 variables.
+                state.append(extra_variables[feat])
+                continue
+
             if feat == 'volume':
                 if self.normalized:
-                    state.append(volume_left/self.V)
+                    state.append(float(volume_left/self.V))
                 else:
-                    state.append(volume_left)
+                    state.append(float(volume_left))
             elif feat == 'time':
                 if self.normalized:
-                    state.append(time_left/self.T)
+                    state.append(float(time_left/self.T))
                 else:
-                    state.append(time_left)
+                    state.append(float(time_left))
             elif feat == 'spread':
                 state.append(orderbook.features['spread'])
+            elif feat == 'shares':
+                val = orderbook.get_current_sharecount(cash=self.V)[0]
+                state.append(val)
+            elif feat == 'future15_market':
+                fut_sharecount = orderbook_cheat.get_current_sharecount(cash=self.V)
+                sharecount = orderbook.get_current_sharecount(cash=self.V)
+                val = (fut_sharecount[0]/sharecount[0]) - 1
+                state.append(val)
+            elif feat == 'future15_ob':
+                fut_price = orderbook_cheat.get_center()
+                price = orderbook.get_center()
+                val = (fut_price/price) - 1
+                state.append(val)
+
             else:
                 val = orderbook.features[feat]
-
 
                 if feat in ['high24hr', 'low24hr']:
                     val = val / orderbook.get_center()
@@ -104,11 +148,11 @@ class RLAgent_Base:
 
     def action_to_limit(self, action, init_center=None, current_ask=None):
         assert (self.limit_base == 'init_center' and isinstance(init_center, float)) or \
-                (self.limit_base == 'curr_ask' and isinstance(current_ask, float))
+                (self.limit_base == 'currAsk' and isinstance(current_ask, float)), "Given: {}".format(self.limit_base)
 
         if self.limit_base == 'init_center':
             limit = init_center * (1. + (action/100.))
-        elif self.limit_base == 'curr_ask':
+        elif self.limit_base == 'currAsk':
             limit = current_ask * (1. + (action/100.))
         else:
             raise ValueError
@@ -116,16 +160,16 @@ class RLAgent_Base:
         return limit
 
 
-    def choose_action(self, state, exploration=0):
-        qval = self.predict(state)
-
-        if random.random() < exploration:
-            # choose random action
-            action = random.choice(self.actions)
-        else:
-            # choose best action from Q(s,a) values
-            action = self.actions[np.argmin(qval)]
-        return action
+    # def choose_action(self, state, exploration=0):
+    #     qval = self.predict(state)
+    # 
+    #     if random.random() < exploration:
+    #         # choose random action
+    #         action = random.choice(self.actions)
+    #     else:
+    #         # choose best action from Q(s,a) values
+    #         action = self.actions[np.argmin(qval)]
+    #     return action
 
     def predict(self, state):
         ''' this is only a skeleton '''
@@ -135,225 +179,19 @@ class RLAgent_Base:
         ''' this is only a skeleton '''
         raise NotImplementedError
 
-    def plot_evaluation_costs(self, experiments, vlines=[1], name=None, ylim=None, showfliers=False, hline=None):
-        assert isinstance(hline, str) or hline is None
-        
-        experiments.plot.box(showmeans=True, color={'medians':'green'}, figsize=(12, 8), showfliers=showfliers)
-
-        for line in vlines:
-            plt.axvline(line + 0.5, color='black')
-        # plt.axvline(experiments.shape[1]-0.5, color='black')
-        #plt.axhline(0, color='black')
-        
-        if hline is not None:
-            if hline in experiments.columns:
-                plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label='min mean')
-                plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label='min median')
-            else:
-                print("Could not find experiment '{}'".format(hline))
-
-        title = "{} trading periods  \n{} - {}".format(len(experiments), experiments.index[0], experiments.index[-1])
-        if name is not None:
-            title = "{}: {}".format(name, title)
-        
-        plt.suptitle(title)
-        plt.xlabel("Strategies")
-        plt.ylabel("Occured costs")
-        # plt.savefig("boxplot_train.pdf")
-        plt.xticks(rotation=70)
-        if ylim is not None:
-            plt.ylim(ylim)    
-        plt.legend(loc='best')
-        
-        plt.show()
-
-    def evaluate_window(self, evaluate_agents, custom_strategies, evaluate_actions, window,
-            verbose=False):
-        costs = pd.DataFrame([])
-
-        index = window[0].timestamp
-        init_center = window[0].get_center()
-        
-        ## Learned strategy
-        ots = OrderbookTradingSimulator(orderbooks=window, volume=self.V, consume=self.consume, tradingperiods=self.T,
-                                         period_length=self.period_length)
-        lim_increments = init_center * (self.lim_stepsize / 100)
-
-        for agentname in evaluate_agents.keys():
-            ots.reset()
-            agent = evaluate_agents[agentname]
-
-            for t in range(0, agent.T):
-
-                time_left = agent.T - t
-                timepoint = t*agent.period_length
-                
-                ob_now = window[timepoint]
-                price_incScale = int(round(ob_now.get_center()/lim_increments, 3))
-                
-                # ToDo: Remove hardcoded test
-                # agent.interpolate_vol = True
-                if self.consume=='volume':
-                    volume = float(ots.volume)
-                elif self.consume=='cash':
-                    volume = float(ots.cash)
-                if hasattr(agent, 'volumes_base') and not agent.interpolate_vol:
-                    # discretize volume through rounding (needed for QLookupTable)
-                    volume = agent.round_custombase(volume, non_zero=True)
-    
-                state = agent.generate_state(time_left=time_left, 
-                                            volume_left=volume,
-                                            orderbook=ob_now)
-
-                action, action_idx = agent.get_action(state, exploration=0)
-                
-                if agent.limit_base == 'agression':
-
-                    if "fake" in agentname:
-                        print(action, action_idx)
-                        fut15 = ob_now.features['future15']
-                        print("future15", fut15)
-
-                        if fut15>0.004:
-                            print("increase")
-                            action += 0.4
-                            action_idx +=2
-                        elif fut15<-0.004:
-                            print("decrease")
-                            action -= 0.2
-                            action_idx -=2
-                        else:
-                            print("passive")
-
-                    summary = ots.trade(agression_factor=action, extrainfo={'ACTION':action})
-                elif agent.limit_base == 'incStepUnits':
-                    limit = lim_increments * (price_incScale + action)
-                    summary = ots.trade(limit=limit, extrainfo={'ACTION':action})
-                else:
-                    limit = agent.action_to_limit(action, init_center=init_center, current_ask=ob_now.get_ask())
-                    summary = ots.trade(limit=limit, extrainfo={'ACTION':action})
-                # ots.trade(agression_factor=action, extrainfo={'ACTION':action})
-                
-                if ots.summary['done']:
-                    break
-
-            if verbose:
-                print(agentname, agent.limit_base, lim_increments, ots.history.cost.sum())
-                display(ots.history)
-
-            costs.loc[index, agentname] = ots.history.cost.sum()
-
-        if custom_strategies is not None:
-            for strategyname in custom_strategies.keys():
-
-                strategy = custom_strategies[strategyname]
-                ots.reset()
-
-                for t in range(agent.T):
-                    timepoint = t*self.period_length
-                    ob_now = window[timepoint]
-                    price_incScale = int(round(ob_now.get_center()/lim_increments, 3))
-
-                    action = strategy[t]            
-                    limit = lim_increments * (price_incScale + action)
-
-                    summary = ots.trade(limit=limit, extrainfo={'ACTION':action})
-
-                    if ots.summary['done']:
-                        break
-
-                if verbose:
-                    print(strategyname, agent.limit_base, ots.history.cost.sum())
-                    display(ots.history)
-                costs.loc[index, strategyname] = ots.history.cost.sum()
-        
-
-
-            
-        for action in evaluate_actions:
-            ots.reset()
-            limit = window[0].get_center() * (1. + (action/100.))
-
-            price_incScale = int(round(window[0].get_center()/lim_increments, 3))
-            limit = lim_increments * (price_incScale + action)
-
-            for t in range(0, self.T):
-                ots.trade(limit = limit, extrainfo={'ACTION':action})
-
-                if ots.summary['done']:
-                    break
-            costs.loc[index, str(action)] = ots.history.cost.sum()
-
-            if verbose and (action==2 or action==6):
-                print(action, limit, ots.history.cost.sum())
-                display(ots.history)
-            # if verbose:
-            #     display(ots.history)
-
-        return costs
-
-    def evaluate(self, testdata, additional_agents=None, evaluate_actions=[], custom_strategies=None,
-                 costs=None, name=None, verbose=False, show_plot=False, baseline=None):
-
-        baseline = baseline or self.agent_name
-        name = name or self.agent_name
-        evaluate_agents = {
-            self.agent_name: self
-        }
-        
-
-        if additional_agents and isinstance(additional_agents, dict):
-            evaluate_agents.update(additional_agents)
-
-        if costs is not None:
-            costs = costs
-        else:
-            costs = pd.DataFrame([])
-
-        num_cores = multiprocessing.cpu_count()
-        print("Start parallel evalutions of strategies. (num_cores={})".format(num_cores))
-
-        results = Parallel(n_jobs=num_cores, verbose=5)(delayed(self.evaluate_window)(
-            evaluate_agents=evaluate_agents,
-            custom_strategies=custom_strategies,
-            evaluate_actions=evaluate_actions,
-            window=window, verbose=verbose) for window in testdata)
-        
-        costs = pd.concat(results, axis=0, ignore_index=False)
-                
-        if show_plot:
-            # clear_output(wait=True)
-            vlines = [1]
-            if additional_agents is not None:
-                vlines = vlines + [len(additional_agents)+1]
-            if custom_strategies is not None:
-                vlines = vlines + [len(custom_strategies)+vlines[-1]]
-
-            self.plot_evaluation_costs(
-                costs,
-                vlines=vlines,
-                hline=baseline,
-                showfliers=False)
-            ev = costs.describe()
-            ev.loc['rel_mean',:] = ev.loc['mean',:] / ev.loc['mean',baseline]
-            ev.loc['rel_median',:] = ev.loc['50%',:] / ev.loc['50%',baseline]
-            display(ev)
-            
-        return costs
-
     def sample_from_Q(self, vol_intervals, which_min):
         ''' this is only a skeleton '''
-        raise NotImplementedE
+        raise NotImplementedError
     
-    def heatmap_Q(self, hue='Q', vol_intervals=10, epoch=None, which_min='first', outfile=None, outformat='pdf', show_traces=False, show_minima_count=False):
-        assert len(self.state_variables) == 2, "Not yet implemented for a statespace with more than 2 dimensions"
+    def heatmap_Q(self, hue='Q', vol_intervals=10, epoch=None, which_min='first', outfile=None, outformat='pdf', show_traces=False, show_minima_count=False, extra_variables=None):
+        # assert len(self.state_variables) == 2, "Not yet implemented for a statespace with more than 2 dimensions"
         
         if show_minima_count:
             fig, axs = plt.subplots(ncols=3, figsize=(16,4))
         else:
             fig, axs = plt.subplots(ncols=2, figsize=(16,5))
 
-        df = self.sample_from_Q(vol_intervals=vol_intervals, which_min=which_min)
+        df = self.sample_from_Q(vol_intervals=vol_intervals, which_min=which_min, extra_variables=extra_variables)
         
         sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.1f",
                     ax=axs[0], vmin=self.actions[0], vmax=self.actions[-1]) 
