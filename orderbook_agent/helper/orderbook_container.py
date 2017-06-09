@@ -33,11 +33,14 @@ class OrderbookContainer(object):
         self.kind = kind
         self.norm_factor = 1.0
         self.features = features or {}
-        
         if kind == 'orderbook':
             # sorting is computationally expensive. Avoid it when working on 'diff'-book
             self.asks.sort_index(inplace=True)
             self.bids.sort_index(inplace=True, ascending=False)
+
+            assert len(self.asks) > 0, "shape: {}, ts: {}".format(asks.shape, timestamp)
+            assert len(self.bids) > 0, "shape: {}, ts: {}".format(bids.shape, timestamp)
+            self.features['spread'] = asks.index[0]-bids.index[0]
     
     
     def copy(self):
