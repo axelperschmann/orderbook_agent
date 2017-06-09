@@ -120,7 +120,7 @@ class OrderbookTradingSimulator(object):
         self.buy_history = pd.DataFrame({'Amount' : []})
         
         self.history = pd.DataFrame([])
-        self.summary = {'volume_traded': 0, 'cash_traded':0, 'cost':0, 'done':False} # 'remaining': self.initial_volume,
+        self.summary = {'volume_traded': 0, 'cash_traded':0, 'cost':0, 'slippage':0, 'done':False} # 'remaining': self.initial_volume,
         if self.consume=='cash':
             self.summary['extra_shares'] = 0
 
@@ -282,7 +282,6 @@ class OrderbookTradingSimulator(object):
                             current_price, limit = ob.get_current_price(volume=self.get_units_left()*agression_factor)
                         elif self.consume=='cash':
                             current_shares, limit = ob.get_current_sharecount(cash=self.get_units_left()*agression_factor)
-                            #current_shares, limit = self.orderbooks[self.t].get_current_sharecount(cash=self.get_units_left()*agression_factor)
 
                     info['LIMIT'] = limit
             
@@ -349,10 +348,15 @@ class OrderbookTradingSimulator(object):
                 self.history.loc[timestamp, 'extra_shares'] = extra_shares
                 info['extra_shares'] = extra_shares
                 self.summary['extra_shares'] += info.extra_shares.values[0]
-                
+            
+
+            self.history.loc[timestamp, 'slippage'] = (info.avg.values[0] - self.initial_center) * self.history.volume_traded.values[-1]                
+
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
             self.summary['volume_traded'] += info.volume_traded.values[0]
             self.summary['cash_traded'] += info.cash_traded.values[0]
+            self.summary['slippage'] += self.history.loc[timestamp, 'slippage']
+
             
         if verbose:
             if info.volume_traded.values[0] != 0:
@@ -373,11 +377,11 @@ class OrderbookTradingSimulator(object):
         #     self.history = self.history.append(info_final, ignore_index=False)
         return self.summary
 
-    def perform_trade_wrapper(self, orderbook, *, limit=None, simulation=False):
+    def perform_trade_wrapper(self, orderbook, limit=None, simulation=False):
         return self.__perform_trade(orderbook=orderbook, limit=limit, simulation=simulation)
         
     # @timing
-    def __perform_trade(self, orderbook, *, limit=None, simulation=False):
+    def __perform_trade(self, orderbook, limit=None, simulation=False):
         assert type(orderbook).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbook))
         assert isinstance(limit, (float, int, np.int64)) or limit is None, "Given: '{}'".format(type(limit))
         volume = self.volume
