@@ -124,7 +124,7 @@ class QLearn:
         assert isinstance(orderbook, OrderbookContainer ) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
 
         allowed_variable_set = ['volume', 'time', 'spread']
-        assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}".format(allowed_variable_set)
+        assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}, given: '{}'".format(allowed_variable_set, self.state_variables)
 
         state = []
         for var in self.state_variables:
