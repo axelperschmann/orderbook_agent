@@ -7,6 +7,8 @@ def safe_list_get(l, idx, default):
         return l[idx]
     except IndexError:
         return default
+    except KeyError:
+        return default
 
 def gauss_window(actions, a_idx, std):
     low = len(actions) - 1 - a_idx
