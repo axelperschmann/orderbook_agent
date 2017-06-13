@@ -104,9 +104,10 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
         lim_increments = init_center * (baseline_agent.lim_stepsize / 100)
 
         for agentname in evaluate_agents.keys():
-            ots.reset()
             agent = evaluate_agents[agentname]
 
+            ots.reset()
+            ots.period_length = agent.period_length
             for t in range(0, agent.T):
 
                 time_left = agent.T - t
@@ -143,7 +144,9 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                     break
 
             if verbose:
-                print(agentname, agent.limit_base, lim_increments, ots.history.cost.sum())
+                print(agentname, agent.limit_base, lim_increments)
+                print(" cost", ots.history.cost.sum())
+                print(" slippage", ots.history.slippage.sum())
                 print(agent.actions)
                 display(ots.history)
 
@@ -156,6 +159,7 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
 
                 strategy = custom_strategies[strategyname]
                 ots.reset()
+                ots.period_length = int(len(window) / len(strategy))
 
                 for t in range(agent.T):
                     timepoint = t*baseline_agent.period_length
@@ -172,6 +176,8 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
 
                 if verbose:
                     print(strategyname, agent.limit_base, ots.history.cost.sum())
+                    print(" cost", ots.history.cost.sum())
+                    print(" slippage", ots.history.slippage.sum())
                     display(ots.history)
                 costs.loc[index, strategyname] = ots.history.cost.sum()
                 slippage.loc[index, strategyname] = ots.history.slippage.sum()
@@ -179,6 +185,7 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
             
         for action in evaluate_actions:
             ots.reset()
+            ots.period_length = baseline_agent.period_length
             limit = window[0].get_center() * (1. + (action/100.))
 
             price_incScale = int(round(window[0].get_center()/lim_increments, 3))
@@ -192,8 +199,10 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
             costs.loc[index, str(action)] = ots.history.cost.sum()
             slippage.loc[index, str(action)] = ots.history.slippage.sum()
 
-            if verbose and (action==2 or action==6):
-                print(action, limit, ots.history.cost.sum())
+            if verbose:
+                print("action", action, limit)
+                print(" cost", ots.history.cost.sum())
+                print(" slippage", ots.history.slippage.sum())
                 display(ots.history)
             # if verbose:
             #     display(ots.history)

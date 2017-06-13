@@ -94,7 +94,7 @@ class OrderbookContainer(object):
             orders = self.bids
             orderdirection = -1
         orders['Volume'] = orders.Amount * orders.index
-        assert cash < orders.Volume.sum(), "Can't handle trade. Orderbookvolume exceeded NOT({} < {})".format(cash, orders.Volume.sum())
+        assert abs(cash) < orders.Volume.sum(), "Can't handle trade. Orderbookvolume exceeded, must fulfill abs({}) < {}".format(cash, orders.Volume.sum())
         
         accVol = orders.Volume.cumsum()
         fast_items = len(accVol[accVol < abs(cash)].index)
@@ -104,8 +104,8 @@ class OrderbookContainer(object):
             shares = orders_sub.Amount.sum()
             cash -= orders_sub.Volume.sum() * orderdirection
         
-        for pos in range(fast_items, len(orders)):
-            order = orders.iloc[pos]
+        if round(cash, 2) != 0:
+            order = orders.iloc[fast_items]
             order_price = order.name
 
             if abs(cash) - order.Volume >= 0:
@@ -113,11 +113,14 @@ class OrderbookContainer(object):
             else:
                 current_order_volume = cash/order.name
 
-            cash -= current_order_volume * order_price * orderdirection
-            shares += current_order_volume
-            if abs(cash) == 0:
-                break
-        limit = order_price
+            cash -= current_order_volume * order_price
+            shares += current_order_volume * orderdirection
+            limit = order_price
+        else:
+            limit = orders_sub.index[-1]
+                   
+        assert round(cash, 2) == 0, "given: {}".format(cash)
+        
         
         return shares, limit
         
