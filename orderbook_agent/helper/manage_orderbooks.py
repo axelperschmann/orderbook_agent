@@ -477,13 +477,15 @@ def extract_orderbooks_for_one_currencypair(datafiles, currency_pair, outfile, o
                 # limit orderbook depth, such that both asks and bids contain
                 #  a volume greater than given range_volume.
                 asks['accAmount'] = asks.cumsum()
-                asks_level = asks[asks['accAmount'] > range_volume].index[0]
-                asks = asks[asks.index<=asks_level]
+                asks_level = asks[asks['accAmount'] > range_volume].index
+                if len(asks_level)>0:
+                    asks = asks[asks.index<=asks_level[0]]
                 asks.drop('accAmount', axis=1, inplace=True)
 
                 bids['accAmount'] = bids.cumsum()
-                bids_level = bids[bids['accAmount'] > range_volume].index[0]
-                bids = bids[bids.index>=bids_level]
+                bids_level = bids[bids['accAmount'] > range_volume].index
+                if len(bids_level)>0:
+                    bids = bids[bids.index>=bids_level[0]]
                 bids.drop('accAmount', axis=1, inplace=True)
                 
             # must convert floats to unicode to prevent precision loss when
