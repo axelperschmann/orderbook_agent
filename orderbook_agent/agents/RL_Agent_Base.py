@@ -11,6 +11,7 @@ import math
 import datetime
 from IPython.display import display, clear_output
 import os
+import json
 from tqdm import tqdm, tqdm_notebook
 
 from helper.collect_samples import collect_samples_forward, collect_samples_backward
@@ -20,6 +21,8 @@ import sys
 sys.path.append('..')
 from helper.orderbook_container import OrderbookContainer
 from helper.orderbook_trader import OrderbookTradingSimulator
+from helper.general_helpers import safe_list_get
+
 
 def unwrap_collect_samples_forward(**kwarg):
     return collect_samples_forward(**kwarg)
@@ -32,7 +35,7 @@ class RLAgent_Base:
 
     def __init__(self, actions, lim_stepsize, V, T, consume, period_length, samples, agent_name, limit_base,
                  state_variables=['volume', 'time'], normalized=False):
-        self.actions = actions
+        self.actions = list(actions)
         self.state_dim = len(state_variables)
         self.action_dim = len(actions)
         self.lim_stepsize = lim_stepsize or 0.1
@@ -82,8 +85,41 @@ class RLAgent_Base:
     def save(self, outfile, outfile_samples):
         raise NotImplementedError
 
-    def load(infile_agent, infile_samples):
-        raise NotImplementedError
+    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None):
+        if agent_name is None:
+            assert isinstance(infile_agent, str), "Bad parameter 'infile_agent', given: {}".format(infile_agent)
+        else:
+            infile_agent = "{}.json".format(agent_name)
+            infile_model = "{}.obj".format(agent_name)
+            infile_samples = "{}.csv".format(agent_name)
+
+        with open(os.path.join(path, infile_agent), 'r') as f:
+            data = json.load(f)
+
+        agent_type = safe_list_get(data, idx='agent_type', default='QTable_Agent')
+        
+        if agent_type=='QTable_Agent':
+            from agents.QTable_Agent import QTable_Agent
+            agent = QTable_Agent.load(
+                agent_name=agent_name,
+                path=path,
+                infile_agent=infile_agent,
+                infile_samples=infile_samples
+                )
+        elif agent_type=='BatchTree_Agent':
+            from agents.BatchTree_Agent import RLAgent_BatchTree
+            agent = RLAgent_BatchTree.load(
+                agent_name=agent_name,
+                path=path,
+                infile_agent=infile_agent,
+                infile_model=infile_model,
+                infile_samples=infile_samples
+                )
+        else:
+            raise ValueError("Unknown agent_type, given: '{}'".format(agent_type))
+
+        return agent
+
     
     def generate_state(self, time_left, volume_left, orderbook=None, orderbook_cheat=None, extra_variables=None):  
         assert isinstance(time_left, (int, float)), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
@@ -111,7 +147,7 @@ class RLAgent_Base:
                 else:
                     state.append(float(time_left))
             elif feat == 'spread':
-                state.append(orderbook.features['spread'])
+                state.append(float(orderbook.features['spread']))
             elif feat == 'shares':
                 val = orderbook.get_current_sharecount(cash=self.V)[0]
                 state.append(val)
@@ -127,7 +163,7 @@ class RLAgent_Base:
                 state.append(val)
 
             else:
-                val = orderbook.features[feat]
+                val = float(orderbook.features[feat])
 
                 if feat in ['high24hr', 'low24hr']:
                     val = val / orderbook.get_center()

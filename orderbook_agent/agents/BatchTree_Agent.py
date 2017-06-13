@@ -4,10 +4,13 @@ import numpy as np
 from IPython.display import display
 from sklearn.ensemble import RandomForestRegressor
 import random
+import dill
+import json
+import os
 
 from .RL_Agent_Base import RLAgent_Base
 from helper.orderbook_trader import OrderbookTradingSimulator
-
+from helper.general_helpers import safe_list_get
 
 class RLAgent_BatchTree(RLAgent_Base):
     def __init__(self, actions, V, T, consume, period_length, limit_base,
@@ -26,6 +29,95 @@ class RLAgent_BatchTree(RLAgent_Base):
             normalized=normalized,
             limit_base=limit_base)
         self.model = model
+
+    def save(self, path=".", outfile_agent=None, outfile_model=None, outfile_samples=None, overwrite=False):
+        if outfile_agent is None:
+            outfile_agent = self.agent_name
+        if outfile_model is None:
+            outfile_model = self.agent_name
+        if outfile_samples is None:
+            outfile_samples = self.agent_name
+
+        # append file type
+        if outfile_agent.split(".")[-1] != 'json':
+            outfile_agent = '{}.json'.format(outfile_agent)
+        if outfile_model.split(".")[-1] != 'model':
+            outfile_model = '{}.model'.format(outfile_model)
+        if outfile_samples.split(".")[-1] != 'csv':
+            outfile_samples = '{}.csv'.format(outfile_samples)
+
+        obj = {'actions': self.actions,
+               'lim_stepsize': self.lim_stepsize,
+               'V': self.V,
+               'T': self.T,
+               'consume': self.consume,
+               'period_length': self.period_length,
+               'agent_name': self.agent_name,
+               'state_variables': self.state_variables,
+               'normalized': self.normalized,
+               'limit_base': self.limit_base,
+               'agent_type': 'BatchTree_Agent',
+               }
+
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+        ### save agent to disk
+        outfile_agent = os.path.join(path, outfile_agent)
+        if os.path.isfile(outfile_agent) and overwrite is False:
+            print("File '{}' exists! Do not overwrite!".format(outfile_agent))
+        else:
+            with open(outfile_agent, 'w') as f_out:
+                f_out.write(json.dumps(obj, default=lambda df: json.loads(df.to_json())) + "\n")
+            print("Saved agent: '{}'".format(outfile_agent))
+
+        ### save agent model to disk
+        outfile_model = os.path.join(path, outfile_model)
+        if os.path.isfile(outfile_model) and overwrite is False:
+            print("File '{}' exists! Do not overwrite!".format(outfile_model))
+        else:
+            with open(outfile_model, 'wb') as f_out:
+                dill.dump(self.model, f_out)
+            print("Saved model: '{}'".format(outfile_model))
+
+        ### save samples to disk
+        outfile_samples = os.path.join(path, outfile_samples)
+        if os.path.isfile(outfile_samples) and overwrite is False:
+            print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+        else:
+            self.samples.to_csv(outfile_samples)
+            print("Saved samples: '{}'".format(outfile_samples))
+
+    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None):
+        if agent_name is None:
+            assert isinstance(infile_agent, str), "Bad parameter 'infile_agent', given: {}".format(infile_agent)
+            assert isinstance(infile_model, str), "Bad parameter 'infile_model', given: {}".format(infile_model)
+            assert isinstance(infile_samples, str), "Bad parameter 'infile_samples', given: {}".format(infile_samples)
+        else:
+            infile_agent = "{}.json".format(agent_name)
+            infile_model = "{}.model".format(agent_name)
+            infile_samples = "{}.csv".format(agent_name)
+
+        with open(os.path.join(path, infile_agent), 'r') as f:
+            data = json.load(f)
+        
+        ql = RLAgent_BatchTree(
+            actions=data['actions'],
+            lim_stepsize=safe_list_get(data, idx='lim_stepsize', default=0.1),
+            V=data['V'],
+            T=data['T'],
+            consume=safe_list_get(data, idx='consume', default='volume'),
+            period_length=data['period_length'],
+            agent_name=data['agent_name'],
+            state_variables=data['state_variables'] or ['volume', 'time'],
+            normalized=data['normalized'],
+            limit_base=data['limit_base'],
+            )
+
+        ql.samples = pd.read_csv(os.path.join(path, infile_samples), index_col=0)
+        ql.model = dill.load(open(os.path.join(path, infile_model), "rb"))
+
+        return ql
 
     def predict(self, states):
         df = pd.DataFrame(states).T
@@ -99,15 +191,16 @@ class RLAgent_BatchTree(RLAgent_Base):
 
             #self.heatmap_Q(show_traces=False, show_minima_count=True, vol_intervals=10)
 
-    def sample_from_Q(self, vol_intervals, which_min):
-        assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
+    def sample_from_Q(self, vol_intervals, which_min, extra_variables=None):
+        # assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
         
         df = pd.DataFrame([], columns=self.state_variables)
         for t in range(1, self.T+1):
             for v in np.linspace(0, self.V, num=vol_intervals+1)[1:]:
                 
                 state = self.generate_state(time_left=t,
-                                        volume_left=v)
+                                        volume_left=v,
+                                        extra_variables=extra_variables)
 
                 q = np.array(self.predict(state))
 
