@@ -100,8 +100,8 @@ def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epoc
             random_start=random_start,
             exploration=2)
 
-        print("brain.fitted_Q_iteration_tree() - {} samples".format(len(brain.samples)))
-        brain.fitted_Q_iteration_tree(nb_it=T*2, verbose=False, n_estimators=400, max_depth=20)
+        print("brain.learn_fromSamples() - {} samples".format(len(brain.samples)))
+        brain.learn_fromSamples(nb_it=T*2, verbose=False, n_estimators=400, max_depth=20)
 
         print("brain.samples.shape", brain.samples.shape)
     return brain
