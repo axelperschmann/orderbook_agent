@@ -15,7 +15,7 @@ from helper.general_helpers import safe_list_get
 class RLAgent_BatchTree(RLAgent_Base):
     def __init__(self, actions, V, T, consume, period_length, limit_base,
                  model=None, samples=None, agent_name='BatchTree_Agent', lim_stepsize=0.1,
-                 state_variables=['volume', 'time'], normalized=False):
+                 state_variables=['volume', 'time'], normalized=False, agent_type='BatchTree_Agent'):
         super().__init__(
             actions=actions,
             lim_stepsize=lim_stepsize,
@@ -27,8 +27,37 @@ class RLAgent_BatchTree(RLAgent_Base):
             agent_name=agent_name,
             state_variables=state_variables,
             normalized=normalized,
-            limit_base=limit_base)
+            limit_base=limit_base,
+            agent_type=agent_type)
         self.model = model
+
+    def get_params(self):
+        params = {
+               'actions': self.actions,
+               'lim_stepsize': self.lim_stepsize,
+               'V': self.V,
+               'T': self.T,
+               'consume': self.consume,
+               'period_length': self.period_length,
+               'agent_name': self.agent_name,
+               'state_variables': self.state_variables,
+               'normalized': self.normalized,
+               'limit_base': self.limit_base,
+               'agent_type': 'BatchTree_Agent',
+               }
+
+        return params
+
+    def copy(self, new_name=None):
+        params = self.get_params()
+
+        new_agent = QTable_Agent(**params)
+        if isinstance(new_name, str):
+            new_agent.agent_name = new_name
+        new_agent.samples = self.samples.copy()
+        new_agent.model = self.model.copy()
+
+        return new_agent
 
     def save(self, path=".", outfile_agent=None, outfile_model=None, outfile_samples=None, overwrite=False):
         if outfile_agent is None:
@@ -46,18 +75,7 @@ class RLAgent_BatchTree(RLAgent_Base):
         if outfile_samples.split(".")[-1] != 'csv':
             outfile_samples = '{}.csv'.format(outfile_samples)
 
-        obj = {'actions': self.actions,
-               'lim_stepsize': self.lim_stepsize,
-               'V': self.V,
-               'T': self.T,
-               'consume': self.consume,
-               'period_length': self.period_length,
-               'agent_name': self.agent_name,
-               'state_variables': self.state_variables,
-               'normalized': self.normalized,
-               'limit_base': self.limit_base,
-               'agent_type': 'BatchTree_Agent',
-               }
+        obj = self.get_params()
 
         if not os.path.exists(path):
             os.makedirs(path)
@@ -88,7 +106,7 @@ class RLAgent_BatchTree(RLAgent_Base):
             self.samples.to_csv(outfile_samples)
             print("Saved samples: '{}'".format(outfile_samples))
 
-    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None):
+    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None, ignore_samples=False):
         if agent_name is None:
             assert isinstance(infile_agent, str), "Bad parameter 'infile_agent', given: {}".format(infile_agent)
             assert isinstance(infile_model, str), "Bad parameter 'infile_model', given: {}".format(infile_model)
@@ -114,12 +132,18 @@ class RLAgent_BatchTree(RLAgent_Base):
             limit_base=data['limit_base'],
             )
 
-        ql.samples = pd.read_csv(os.path.join(path, infile_samples), index_col=0)
+        if ignore_samples:
+            ql.samples = pd.DataFrame()
+            print("No samples loaded! Parameter 'ignore_samples'==True")
+        else:
+            ql.samples = pd.read_csv(os.path.join(path, infile_samples), parse_dates=['timestamp'], index_col=0)
         ql.model = dill.load(open(os.path.join(path, infile_model), "rb"))
 
         return ql
 
     def predict(self, states):
+        assert self.model is not None, "Agent has no model yet. Call 'learn_fromSamples() to start training from {} samples".format(self.samples.shape)
+
         df = pd.DataFrame(states).T
         
         preds = []
@@ -148,12 +172,15 @@ class RLAgent_BatchTree(RLAgent_Base):
         
     def learn(self, state, action, cost, new_state):
         '''
-        look for function instead: fitted_Q_iteration_tree()
+        look for function instead: learn_fromSamples()
         '''
         print("learn")
         raise NotImplementedError    
 
-    def fitted_Q_iteration_tree(self, nb_it, n_estimators=20, max_depth=12, verbose=False):
+    def learn_fromSamples(self, nb_it=None, n_estimators=20, max_depth=12, verbose=False):
+        if nb_it is None:
+            nb_it = self.T +1
+
         reg = None
         d_rate = 0.95
         df = self.samples.copy()
@@ -182,7 +209,7 @@ class RLAgent_BatchTree(RLAgent_Base):
                 # if done, do not add any future costs anymore.
                 df['min_cost'] = (df['cost'] + (1 - df['done']) * (preds.min() * d_rate))
                 
-            reg = RandomForestRegressor(n_estimators=20, max_depth=max_depth)
+            reg = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth)
             reg = reg.fit(df[self.state_variables+['action']], df['min_cost'])
             if verbose:
                 print("Score:", reg.score(df[self.state_variables+['action']], df['min_cost']))

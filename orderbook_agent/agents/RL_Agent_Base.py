@@ -33,8 +33,9 @@ def unwrap_collect_samples_backward(**kwarg):
 
 class RLAgent_Base:
 
-    def __init__(self, actions, lim_stepsize, V, T, consume, period_length, samples, agent_name, limit_base,
-                 state_variables=['volume', 'time'], normalized=False):
+    def __init__(self, actions, lim_stepsize, V, T, consume, period_length, samples, 
+                 agent_name, agent_type, limit_base, state_variables=['volume', 'time'],
+                 normalized=False):
         self.actions = list(actions)
         self.state_dim = len(state_variables)
         self.action_dim = len(actions)
@@ -47,6 +48,7 @@ class RLAgent_Base:
         self.state_variables = state_variables
         self.created = datetime.datetime.now()
         self.agent_name = agent_name
+        self.agent_type = agent_type
         self.normalized = normalized
         self.limit_base = limit_base
 
@@ -55,7 +57,7 @@ class RLAgent_Base:
         self.samples['action_idx'] = self.samples.action_idx.astype(int)
 
     def __str__(self):
-        return("RL-Type: {}".format(type(self)))
+        return("RL-Type: {}, Name: '{}'".format(type(self), self.agent_name))
 
     def generate_sample(self, state, action, action_idx, cost, avg, initial_center, timestamp, new_state):
         return pd.DataFrame([state + [round(action, 2)] + [action_idx] + [cost] + [avg] + [initial_center] + [pd.to_datetime(timestamp)] + new_state],
@@ -81,11 +83,13 @@ class RLAgent_Base:
 
         self.append_samples(new_samples=pd.concat(results, axis=0, ignore_index=True))
 
+    def copy(self):
+        raise NotImplementedError
 
     def save(self, outfile, outfile_samples):
         raise NotImplementedError
 
-    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None):
+    def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None, ignore_samples=False):
         if agent_name is None:
             assert isinstance(infile_agent, str), "Bad parameter 'infile_agent', given: {}".format(infile_agent)
         else:
@@ -104,7 +108,8 @@ class RLAgent_Base:
                 agent_name=agent_name,
                 path=path,
                 infile_agent=infile_agent,
-                infile_samples=infile_samples
+                infile_samples=infile_samples,
+                ignore_samples=ignore_samples
                 )
         elif agent_type=='BatchTree_Agent':
             from agents.BatchTree_Agent import RLAgent_BatchTree
@@ -113,7 +118,8 @@ class RLAgent_Base:
                 path=path,
                 infile_agent=infile_agent,
                 infile_model=infile_model,
-                infile_samples=infile_samples
+                infile_samples=infile_samples,
+                ignore_samples=ignore_samples
                 )
         else:
             raise ValueError("Unknown agent_type, given: '{}'".format(agent_type))
@@ -126,6 +132,9 @@ class RLAgent_Base:
         assert isinstance(volume_left, (int, np.int64, float, np.float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
         assert (type(orderbook).__name__ == OrderbookContainer.__name__) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
 
+        if extra_variables is not None:
+            for key in extra_variables.keys():
+                assert key in self.state_variables, "extra_variables '{}' is not contained in agents state_variables: {}".format(key, self.state_variables)
         # allowed_variable_set = ['volume', 'time', 'spread']
         # assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}".format(allowed_variable_set)
 
@@ -165,8 +174,6 @@ class RLAgent_Base:
             else:
                 val = float(orderbook.features[feat])
 
-                if feat in ['high24hr', 'low24hr']:
-                    val = val / orderbook.get_center()
                 state.append(val)
                 
             #else:
@@ -240,9 +247,12 @@ class RLAgent_Base:
             sns.heatmap(df.pivot('time', 'volume', 'minima_count'), annot=True, ax=axs[2])
             axs[2].set_title('Minima Count')
         
-        title = "Q function (T:{}, V:{})".format(self.T*self.period_length, self.V)
+        title = "{}: Q function (T:{}, V:{})".format(self.agent_name, self.T*self.period_length, self.V)
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
+        if extra_variables is not None:
+            title = "{}, extra_variables: {}".format(title, extra_variables)
+        fig.suptitle(title)
 
         if show_traces:
             first = True

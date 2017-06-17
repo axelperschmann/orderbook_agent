@@ -16,7 +16,7 @@ class QTable_Agent(RLAgent_Base):
     def __init__(self, actions, vol_intervals, limit_base, V=100, T=4, consume='volume',
                  period_length=15, samples=None, lim_stepsize=0.1,
                  agent_name='QTable_Agent', state_variables=['volume', 'time'],
-                 normalized=True, interpolate_vol=False):
+                 normalized=True, interpolate_vol=False, agent_type='QTable_Agent'):
         super().__init__(
             actions=actions,
             lim_stepsize=lim_stepsize,
@@ -28,7 +28,8 @@ class QTable_Agent(RLAgent_Base):
             agent_name=agent_name,
             state_variables=state_variables,
             normalized=normalized,
-            limit_base=limit_base
+            limit_base=limit_base,
+            agent_type=agent_type
         )
 
         self.vol_intervals = vol_intervals
@@ -37,6 +38,65 @@ class QTable_Agent(RLAgent_Base):
         self.interpolate_vol = interpolate_vol
         self.q = {}
         self.n = {}  # n is the number of times we have tried an action in a state
+
+
+    def convert_to_BatchTreeAgent(self, new_name, train=False):
+        from .BatchTree_Agent import RLAgent_BatchTree
+        params = self.get_params()
+        del(params['n'], 
+            params['q'], 
+            params['vol_intervals'], 
+            params['interpolate_vol'], 
+            params['agent_type']
+            )
+        new_agent = RLAgent_BatchTree(**params)
+        new_agent.agent_name = new_name
+        new_agent.samples = self.samples.copy()
+
+        if train:
+            new_agent.learn_fromSamples()
+
+        return new_agent
+
+    def get_params(self):
+        puffer_q = {}
+        puffer_n = {}
+        for elem in self.q:
+            puffer_q[elem] = self.q[elem].tolist()
+            puffer_n[elem] = self.n[elem].tolist()
+        params = {'actions': self.actions,
+               'lim_stepsize': self.lim_stepsize,
+               'vol_intervals': self.vol_intervals,
+               'V': self.V,
+               'T': self.T,
+               'consume': self.consume,
+               'period_length': self.period_length,
+               'agent_name': self.agent_name,
+               'state_variables': self.state_variables,
+               'normalized': self.normalized,
+               'limit_base': self.limit_base,
+               'interpolate_vol': self.interpolate_vol,
+               'q': puffer_q,
+               'n': puffer_n,
+               'agent_type': 'QTable_Agent',
+               }
+
+        return params
+
+    def copy(self, new_name=None):
+        params = self.get_params()
+        q = params.pop('q')
+        n = params.pop('n')
+
+        new_agent = QTable_Agent(**params)
+        if isinstance(new_name, str):
+            new_agent.agent_name = new_name
+
+        new_agent.samples = self.samples.copy()
+        new_agent.q = q
+        new_agent.n = n
+
+        return new_agent
 
 
     def save(self, path=".", outfile_agent=None, outfile_samples=None, overwrite=False):
@@ -51,27 +111,7 @@ class QTable_Agent(RLAgent_Base):
         if outfile_samples.split(".")[-1] != 'csv':
                 outfile_samples = '{}.csv'.format(outfile_samples)
 
-        puffer_q = {}
-        puffer_n = {}
-        for elem in self.q:
-            puffer_q[elem] = self.q[elem].tolist()
-            puffer_n[elem] = self.n[elem].tolist()
-
-        obj = {'actions': self.actions,
-               'lim_stepsize': self.lim_stepsize,
-               'vol_intervals': self.vol_intervals,
-               'T': self.T,
-               'V': self.V,
-               'consume': self.consume,
-               'period_length': self.period_length,
-               # 'samples': self.samples,
-               'agent_name': self.agent_name,
-               'state_variables': self.state_variables,
-               'normalized': self.normalized,
-               'limit_base': self.limit_base,
-               'interpolate_vol': self.interpolate_vol,
-               'q': puffer_q,
-               'n': puffer_n}
+        obj = self.get_params()
 
         if not os.path.exists(path):
             os.makedirs(path)
@@ -93,16 +133,24 @@ class QTable_Agent(RLAgent_Base):
             self.samples.to_csv(outfile_samples)
             print("Saved samples: '{}'".format(outfile_samples))
 
-    def load(infile_agent, infile_samples):
-        with open(infile_agent, 'r') as f:
+    def load(agent_name=None, path='.', infile_agent=None, infile_samples=None, ignore_samples=False):
+        if agent_name is None:
+            assert isinstance(infile_agent, str), "Bad parameter 'infile_agent', given: {}".format(infile_agent)
+            assert isinstance(infile_samples, str), "Bad parameter 'infile_samples', given: {}".format(infile_samples)
+        else:
+            infile_agent = "{}.json".format(agent_name)
+            infile_samples = "{}.csv".format(agent_name)
+
+
+        with open(os.path.join(path, infile_agent), 'r') as f:
             data = json.load(f)
         
         ql = QTable_Agent(
             actions=data['actions'],
             lim_stepsize=safe_list_get(data, idx='lim_stepsize', default=0.1),
             vol_intervals=data['vol_intervals'],
-            T=data['T'],
             V=data['V'],
+            T=data['T'],
             consume=safe_list_get(data, idx='consume', default='volume'),
             period_length=data['period_length'],
             agent_name=data['agent_name'],
@@ -118,11 +166,16 @@ class QTable_Agent(RLAgent_Base):
             ql.q[elem] = np.array(ql.q[elem])
             ql.n[elem] = np.array(ql.n[elem])
 
-        ql.samples = pd.read_csv(infile_samples, index_col=0)
+        if ignore_samples:
+            ql.samples = pd.DataFrame()
+            print("No samples loaded! Parameter 'ignore_samples'==True")
+        else:
+            ql.samples = pd.read_csv(os.path.join(path, infile_samples), parse_dates=['timestamp'], index_col=0)
+            ql.samples['timestamp']
 
         return ql
 
-    def learn_fromSamples(self, reset_brain=True):
+    def learn_fromSamples(self, reset_brain=True, verbose=False):
         if reset_brain:
             self.q = {}
             self.n = {}
@@ -133,9 +186,15 @@ class QTable_Agent(RLAgent_Base):
             df_sub = self.samples[self.samples.time==time_left]
             
             for idx, row in enumerate(df_sub.iterrows()):
+                if verbose:
+                    if idx%5000==0:
+                        print("{}/{}".format(idx, len(df_sub)))
+
                 sample = row[1]
 
                 state = sample[self.state_variables].copy()
+                assert pd.isnull(state).any()==False, "NaN in state: '{}', '{}'\n{}".format(state.values, state.index, sample)
+
                 state['volume'] = self.round_custombase(state.volume)
                 # print("vol", state.values)
                 if self.normalized:
@@ -244,6 +303,7 @@ class QTable_Agent(RLAgent_Base):
         return N_values
 
     def learn(self, state, action, cost, new_state):
+        state = [float(v) for v in state]
 
         oldv = self.q.get(str(state), None)
         
@@ -309,9 +369,9 @@ class QTable_Agent(RLAgent_Base):
             volumes = self.volumes
 
         df = pd.DataFrame([], columns=self.state_variables)
+        
         for t in range(1, self.T+1):
             for v in volumes:
-
                 state = self.generate_state(time_left=t,
                                             volume_left=v,
                                             extra_variables=extra_variables)
@@ -328,5 +388,7 @@ class QTable_Agent(RLAgent_Base):
                                            'minima_count': minima_count,
                                            'action': action}, index=["{},{:1.2f}".format(t, v)])
                     df = pd.concat([df, df_tmp])
+                else:
+                    print('q', q)
         df['time'] = df.time.astype(int)
         return df
