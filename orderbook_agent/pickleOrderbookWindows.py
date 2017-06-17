@@ -17,8 +17,7 @@ def touch(fname, times=None):
 decision_points = 4
 period_length = 15
 
-
-path = "/home/axel/data/small"
+path = "/home/axel/data/medium"
 data_files = [f for f in os.listdir(path) if f.endswith('.dict')]
 print(data_files)
 
@@ -27,9 +26,10 @@ for inputfile in tqdm(data_files):
                                             episode_length=decision_points*period_length)
     
     print(inputfile, len(episodes_train))
-    outputfile = "/home/axel/notebooks/orderbook_agent/orderbook_agent/cached_windows/{}.p".format(inputfile.split(".")[0])
+    outputfile = "/home/axel/notebooks/orderbook_agent/orderbook_agent/cached_windows_60mins_V200/{}.p".format(inputfile.split(".")[0])
     
     print("Outputfile: {}".format(outputfile))
 
     data = list(episodes_train)
     pickle.dump( data, open( os.path.join(path, outputfile), "wb" ) )
+    
