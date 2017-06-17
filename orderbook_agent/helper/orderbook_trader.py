@@ -25,12 +25,13 @@ class OrderbookTradingSimulator(object):
             return result
         return wrap
 
-    def __init__(self, orderbooks, volume, tradingperiods, consume='volume', period_length=1):
+    def __init__(self, orderbooks, volume, tradingperiods, consume='volume', cost_type='slippage', period_length=1):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         assert len(orderbooks) == tradingperiods*period_length, "Expected len(orderbooks) to equal tradingperiods*period_length, but: {} != {}*{}".format(len(orderbooks), tradingperiods, period_length)
         assert isinstance(volume, (float, int)),  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(volume))
         assert isinstance(tradingperiods, int) and tradingperiods>0, "Parameter 'tradingperiods' must be 'int' and larger than 0, given: {}".format(type(timespan))
         assert isinstance(consume, str) and consume in ['volume', 'cash'], "Parameter 'consume' must be 'volume' or 'cash', given: {}, {}".format(type(goal_unit), goal_unit)
+        assert isinstance(cost_type, str) and cost_type in ['slippage', 'extra_money'], "Parameter 'cost_type' must be 'slippage' or 'extra_money', given: {}, {}".format(type(cost_type), cost_type)
         assert isinstance(period_length, int) and period_length > 0, "Parameter 'period_length' must be 'int', given: {}".format(type(period_length))
 
         if consume=='volume':
@@ -68,6 +69,7 @@ class OrderbookTradingSimulator(object):
         self.initial_volume = volume
         self.initial_cash = cash
         self.consume = consume
+        self.cost_type = cost_type
 
         self.initial_center = orderbooks[0].get_center()
         if consume=='volume':
@@ -351,6 +353,8 @@ class OrderbookTradingSimulator(object):
             
 
             self.history.loc[timestamp, 'slippage'] = (info.avg.values[0] - self.initial_center) * self.history.volume_traded.values[-1]                
+            if self.cost_type=='slippage':
+                self.history.loc[timestamp, 'cost'] = self.history.loc[timestamp, 'slippage']     / self.initial_center            
 
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
             self.summary['volume_traded'] += info.volume_traded.values[0]
