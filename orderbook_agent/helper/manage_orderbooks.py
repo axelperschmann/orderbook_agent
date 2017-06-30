@@ -186,7 +186,7 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         period_length = int(len(episode_windows) / len(limits))
         limit_idx = 0
         limits_y = []
-        fig, axs = plt.subplots(nrows=3, figsize=figsize)
+        fig, axs = plt.subplots(nrows=3, figsize=figsize, gridspec_kw={'height_ratios': [2,1,1]})
         ax = axs[0]
     else:
         fig, ax = plt.subplots(nrows=1, figsize=figsize)
@@ -205,14 +205,32 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         for i in range(intervals):
             volume_fraction = 1.*(i+1)/intervals * volume
             if kind == 'avg':
-                # Show current average price, when buying specified volume.
-                price_ask[i].append(ob.get_current_price(volume_fraction)[0] / volume_fraction)
-                price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
+                if consume=='volume':
+                    # Show current average price, when buying specified volume.
+                    price_ask[i].append(ob.get_current_price(volume_fraction)[0] / volume_fraction)
+                    price_bid[i].append(ob.get_current_price(-volume_fraction)[0] / volume_fraction)
+                elif consume=='cash':
+                    shares_, limit_ = ob.get_current_sharecount(cash=volume_fraction)
+                    price_ask[i].append(volume_fraction / shares_)
+
+                    shares_, limit_ = ob.get_current_sharecount(cash=-volume_fraction)
+                    # price_bid[i].append(volume_fraction / shares_)
+                    price_bid[i].append(initial_center)
+                    # ToDo: Bugfix here!
+                    
             elif kind == 'worst':
-                # Show current worst price, when buying specified volume.
-                price_ask[i].append(ob.get_current_price(volume_fraction)[1])
-                price_bid[i].append(ob.get_current_price(-volume_fraction)[1])
-        timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
+                if consume=='volume':
+                    # Show current worst price, when buying specified volume.
+                    price_ask[i].append(ob.get_current_price(volume_fraction)[1])
+                    price_bid[i].append(ob.get_current_price(-volume_fraction)[1])
+                elif consume=='cash':
+                    price_ask[i].append(ob.get_current_sharecount(cash=volume_fraction)[1])
+                    price_bid[i].append(ob.get_current_sharecount(cash=-volume_fraction)[1])
+
+        if isinstance(ob.timestamp, str):
+            timestamps.append(datetime.strptime(ob.timestamp, '%Y-%m-%dT%H:%M'))
+        else:
+            timestamps.append(ob.timestamp)
     
     if limits is not None:
         ax.plot(timestamps, limits_y, color='grey', drawstyle='steps-post', label='Limits')
@@ -223,6 +241,7 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         volume_left = [volume]
         costs = []
         avgs = []
+
         for t, lim in enumerate(limits_y):
             if t == len(limits_y) -1:
                 # forced trade at very end of tradingperiod
@@ -231,15 +250,25 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
             summary = ots.perform_trade_wrapper(ots.masterbook, limit=lim)
             ots.t +=1
             ots.volume -= summary['volume']
+            ots.cash += summary['cash_traded']
+
+            if t == 15:
+                display(ots.masterbook.head(10))
+                ots.masterbook.plot()
 
             traded_volume.append(summary['volume'])
-            volume_left.append(ots.volume)
+            volume_left.append(ots.get_units_left())
             
             cost = 0
             avg = np.nan
             if abs(summary['volume']) > 0:
-                avg = abs(summary['cash_traded']) / summary['volume']
-                cost = summary['volume'] * (avg - ots.initial_center) / ots.market_slippage
+                if consume=='volume':
+                    avg = abs(summary['cash_traded']) / summary['volume']
+                    cost = summary['volume'] * (avg - ots.initial_center) / ots.market_slippage
+                elif consume=='cash':
+                    avg = abs(summary['cash_traded']) / summary['volume']
+                    cost = (avg - initial_center) # * summary['cash_traded']
+            
             costs.append(cost)
             avgs.append(avg)
             if abs(ots.volume) < 1e-10:
@@ -249,7 +278,7 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         axs[1].set_ylabel("Traded shares")
         ax2 = axs[1].twinx()
         ax2.step(range(len(volume_left)), volume_left, where='mid', color='red', label='volume')
-        ax2.set_ylabel("Volume left")
+        ax2.set_ylabel("{} left".format(consume))
         ax2.set_xlim((-1,len(timestamps)))
         ax2.legend(loc='best')
         axs[1].set_xlabel("t")
@@ -268,7 +297,11 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         ax4.set_xlim((-1,len(timestamps)))
         if vlines is None:
             vlines = [period_length*t for t in range(int(len(episode_windows)/period_length))]
-        axs[2].set_xlabel("actions: {}, limits: {}, costs: {:1.2f}".format(actions, limits, np.nansum(np.array(costs))))
+        
+        xlabel = "limits: {}, costs: {:1.2f}".format(limits[:10], np.nansum(np.array(costs)))
+        if actions is not None:
+            xlabel = "actions: {}, {}".format(actions, xlabel)
+        axs[2].set_xlabel(xlabel)
     
     ax.plot(timestamps, center, color='black', label='Center')
     ax.fill_between(timestamps, price_ask[intervals-1], ask, color='red', alpha=0.1)    
@@ -291,7 +324,7 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         volume_fraction = 1.*(i+1)/intervals
         ax.plot(timestamps, price_bid[i], color='green', alpha=volume_fraction)
         ax.plot(timestamps, price_ask[i], color='red', alpha=volume_fraction)
-    title = "{}: '{}' Price comparison for a trade volume of {} shares".format(episode_windows[0].timestamp, kind, volume)
+    title = "{}  -  {}\n'{}' Price comparison for a trade volume of {} shares".format(episode_windows[0].timestamp, episode_windows[-1].timestamp, kind, volume)
 
     if intervals > 1:
         title = "{} (interval size: {})".format(title, 1.*volume/intervals)

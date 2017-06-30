@@ -40,7 +40,7 @@ class QTable_Agent(RLAgent_Base):
         self.n = {}  # n is the number of times we have tried an action in a state
 
 
-    def convert_to_BatchTreeAgent(self, new_name, train=False):
+    def convert_to_BatchTreeAgent(self, new_name, train=False, state_variables=None):
         from .BatchTree_Agent import RLAgent_BatchTree
         params = self.get_params()
         del(params['n'], 
@@ -49,7 +49,30 @@ class QTable_Agent(RLAgent_Base):
             params['interpolate_vol'], 
             params['agent_type']
             )
+        if state_variables is not None:
+            params['state_variables'] = state_variables
         new_agent = RLAgent_BatchTree(**params)
+        new_agent.agent_name = new_name
+        new_agent.samples = self.samples.copy()
+
+        if train:
+            new_agent.learn_fromSamples()
+
+        return new_agent
+
+    def convert_to_NNAgent(self, new_name, train=False, state_variables=None):
+        from .NN_Agent import RLAgent_NN
+        params = self.get_params()
+        del(params['n'], 
+            params['q'], 
+            params['vol_intervals'], 
+            params['interpolate_vol'], 
+            params['agent_type']
+            )
+        if state_variables is not None:
+            params['state_variables'] = state_variables
+
+        new_agent = RLAgent_NN(**params)
         new_agent.agent_name = new_name
         new_agent.samples = self.samples.copy()
 
@@ -168,7 +191,7 @@ class QTable_Agent(RLAgent_Base):
 
         if ignore_samples:
             ql.samples = pd.DataFrame()
-            print("No samples loaded! Parameter 'ignore_samples'==True")
+            # print("No samples loaded! Parameter 'ignore_samples'==True")
         else:
             ql.samples = pd.read_csv(os.path.join(path, infile_samples), parse_dates=['timestamp'], index_col=0)
             ql.samples['timestamp']

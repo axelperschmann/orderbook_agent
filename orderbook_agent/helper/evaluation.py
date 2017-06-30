@@ -5,11 +5,28 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from IPython.display import display
+from tqdm import tqdm
 
 import sys
 sys.path.append('..')
 from helper.orderbook_container import OrderbookContainer
 from helper.orderbook_trader import OrderbookTradingSimulator
+
+
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        pass
+
+    try:
+        import unicodedata
+        unicodedata.numeric(s)
+        return True
+    except (TypeError, ValueError):
+        pass
+    return False
 
 def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfliers=False, hline=True, outfile=None):
         assert isinstance(hline, (str, bool)) or hline is None
@@ -17,7 +34,10 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
         experiments.plot.box(showmeans=True, color={'medians':'green'}, figsize=(12, 8), showfliers=showfliers)
         
         if vlines is None:
-            simpleStrategies_count = np.sum([elem.isnumeric() for elem in experiments.columns])
+            simpleStrategies_count = np.sum([is_number(elem) for elem in experiments.columns])
+            
+            if "MarketOrder" in experiments.columns:
+                simpleStrategies_count += 1
             vlines = []
             if hline in experiments.columns:
                 vlines = [1]
@@ -27,8 +47,9 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
             plt.axvline(line + 0.5, color='black')
         
         if hline in experiments.columns:
-            plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label='min mean')
-            plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label='min median')
+            mean_ = experiments.mean()
+            plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label="mean '{}':  {}".format(mean_.argmin(), mean_.min()))
+            plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label="median '{}':  {}".format(mean_.argmin(), mean_.min()))
 
 
         title = "{} trading periods  \n{} - {}".format(len(experiments), experiments.index[0], experiments.index[-1])
@@ -39,7 +60,7 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
         plt.xlabel("Strategies")
         plt.ylabel("Occured costs")
         # plt.savefig("boxplot_train.pdf")
-        plt.xticks(rotation=70)
+        plt.xticks(rotation=90)
         if ylim is not None:
             plt.ylim(ylim)    
         plt.legend(loc='best')
@@ -52,7 +73,10 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
             plt.show()
 
 def evaluate(testdata, agents=None, evaluate_actions=[], custom_strategies=None,
-                 name=None, verbose=False, baseline=None):
+                 name=None, limit_num_cores=0, verbose=False, baseline=None):
+        if limit_num_cores==0:
+            limit_num_cores = multiprocessing.cpu_count()
+
         agents = agents.copy()
 
         # reorder agents, such that baseline-agent is the first one.
@@ -65,17 +89,29 @@ def evaluate(testdata, agents=None, evaluate_actions=[], custom_strategies=None,
         if isinstance(agents, dict):
             evaluate_agents.update(agents)
 
-        num_cores = multiprocessing.cpu_count()
         strategy_count = len(evaluate_agents) + len(evaluate_actions)
         if custom_strategies:
             strategy_count += len(custom_strategies)
-        print("Start parallel evalutions of {} strategies over {} tradingperiods. (num_cores={})".format(strategy_count, len(testdata), num_cores))
 
-        results = Parallel(n_jobs=num_cores, verbose=5)(delayed(evaluate_window)(
-            evaluate_agents=evaluate_agents, baseline=baseline_agent,
-            custom_strategies=custom_strategies,
-            evaluate_actions=evaluate_actions,
-            window=window, verbose=verbose) for window in testdata)
+        if limit_num_cores > 1:
+            print("Start parallel evalutions of {} strategies over {} tradingperiods. (num_cores={})".format(strategy_count, len(testdata), limit_num_cores))
+
+            results = Parallel(n_jobs=limit_num_cores, verbose=5)(delayed(evaluate_window)(
+                evaluate_agents=evaluate_agents, baseline=baseline_agent,
+                custom_strategies=custom_strategies,
+                evaluate_actions=evaluate_actions,
+                window=window, verbose=verbose) for window in testdata)
+        else:
+            print("Start non-parallel evalutions of {} strategies over {} tradingperiods.".format(strategy_count, len(testdata)))
+            results = []
+            for window in tqdm(testdata, leave=False, desc='testdata'):
+                results.append(
+                    evaluate_window(
+                        evaluate_agents=evaluate_agents, baseline=baseline_agent,
+                        custom_strategies=custom_strategies,
+                        evaluate_actions=evaluate_actions,
+                        window=window, verbose=verbose)
+                )
         print("done")
         costs = pd.concat([elem[0] for elem in results], axis=0, ignore_index=False)
         slippages = pd.concat([elem[1] for elem in results], axis=0, ignore_index=False)
@@ -125,10 +161,18 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                                                 volume_left=volume,
                                                 orderbook=ob_now,
                                                 orderbook_cheat=ob_next)
+                    if agent.agent_type=='NN_Agent':
+                        state = pd.DataFrame(state).T
 
                     action, action_idx = agent.get_action(state)
                     
-                    if agent.limit_base == 'agression':
+                    if agent.limit_base == 'currAsk':
+                        limit = ob_now.get_ask() * (1. + (action/100.) * agent.lim_stepsize)
+                        summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
+                    elif agent.limit_base == 'currBid':
+                        limit = ob_now.get_bid() * (1. + (action/100.) * agent.lim_stepsize)
+                        summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
+                    elif agent.limit_base == 'agression':
                         summary = ots.trade(agression_factor=action, extrainfo={'ACTION':action})
                     elif agent.limit_base == 'incStepUnits':
                         limit = lim_increments * (price_incScale + action)
@@ -182,10 +226,12 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
             for action in evaluate_actions:
                 ots.reset()
                 ots.period_length = baseline_agent.period_length
-                limit = window[0].get_center() * (1. + (action/100.))
-
-                price_incScale = int(round(window[0].get_center()/lim_increments, 3))
-                limit = lim_increments * (price_incScale + action)
+                # limit = window[0].get_center() * (1. + (action/100.))
+                if action=='MarketOrder':
+                    limit = None
+                else:
+                    price_incScale = int(round(window[0].get_center()/lim_increments, 3))
+                    limit = lim_increments * (price_incScale + action)
 
                 for t in range(0, baseline_agent.T):
                     ots.trade(limit = limit, extrainfo={'ACTION':action})

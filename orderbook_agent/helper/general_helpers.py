@@ -2,6 +2,7 @@ from tqdm import tqdm
 import numpy as np
 import pandas as pd
 from scipy import signal
+from IPython.display import display
 
 def safe_list_get(l, idx, default):
     try:
@@ -35,15 +36,21 @@ def discretize_hist_feature(hist, feature, test_start_date=None, bins=5):
     quantile = df_train[feature].quantile(splits)
 
     bin_borders = [-np.inf] + list(quantile.values) + [np.inf]
+
+    if len(bin_borders) != len(set(bin_borders)):
+        raise ValueError("Could not discretize hist feature")
     
     idx = df.columns.get_loc(feature)
-    df.insert(idx+1, '{}_disc'.format(feature), pd.cut(df[feature], bins=bin_borders, labels=False).astype(float))
+    df.insert(idx+1, '{}_disc{}'.format(feature, bins), pd.cut(df[feature], bins=bin_borders, labels=False).astype(float))
     
     return df
 
 def addMarketFeatures_toSamples(samples, hist, market_features, 
                                 state_variables=None, period_length=15):
     df = samples.copy()
+
+    if samples.isnull().any().any():
+        raise ValueError("NaNs encountered!")
     
     for i, f in tqdm(enumerate(market_features)):
         print(f)
@@ -54,11 +61,11 @@ def addMarketFeatures_toSamples(samples, hist, market_features,
             df.drop(f_n, inplace=True, axis=1)
 
         df.insert(loc=2+i, column=f, 
-                  value=hist.loc[df.timestamp, f].values,
+                  value=hist.loc[df.timestamp, f].values[:len(df)],
                  allow_duplicates=True)
 
         df.insert(loc=df.shape[1], column=f_n,
-                  value=hist.loc[df.timestamp + pd.Timedelta(minutes=period_length), f].values,
+                  value=hist.loc[df.timestamp + pd.Timedelta(minutes=period_length), f].values[:len(df)],
                   allow_duplicates=True)
         
         #'hist' does not necessarily contain timestamps consistent 
@@ -98,9 +105,7 @@ def add_features_to_orderbooks(orderbooks, hist, features=None, reset_features=F
             if reset_features or not hasattr(ob, 'features'):
                 ob.features = {}
 
-            for feat in features:
-                ob.features[feat] = hist.loc[ts, feat]
-
+            ob.features.update(hist.loc[ts, features].to_dict())
         else:
             if reset_features:
                 ob.features = {}

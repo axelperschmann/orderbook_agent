@@ -32,48 +32,58 @@ from Runs.train_agents import trainer_BatchTree, trainer_QTable
 
 num_cores = multiprocessing.cpu_count()
 
-## Preprocess data
-histfiles = [
-    "../../../../data/history/history_2016-11_USDT_BTC.csv",
-    "../../../../data/history/history_2016-12_USDT_BTC.csv",
-    "../../../../data/history/history_2017-01_USDT_BTC.csv",
-    "../../../../data/history/history_2017-02_USDT_BTC.csv",
-]
+# ## Preprocess data
+# histfiles = [
+#     "../../../../data/history/history_2016-11_USDT_BTC.csv",
+# #     "../../../../data/history/history_2016-12_USDT_BTC.csv",
+# #     "../../../../data/history/history_2017-01_USDT_BTC.csv",
+# #     "../../../../data/history/history_2017-02_USDT_BTC.csv",
+# ]
+# # 
+# hist = load_and_preprocess_historyfiles(histfiles)
+# # 
+# hist['future15_disc'] = pd.cut(hist.future15, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
+# hist['future30_disc'] = pd.cut(hist.future30, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
+# hist['future45_disc'] = pd.cut(hist.future45, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
+# hist['spread_disc'] = pd.cut(hist.spread, bins=[0, 1, 2, np.inf], labels=False)
+# # display(hist.iloc[1021:1025,:])
 
-hist = load_and_preprocess_historyfiles(histfiles)
-
-hist['future15_disc'] = pd.cut(hist.future15, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
-hist['future30_disc'] = pd.cut(hist.future30, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
-hist['future45_disc'] = pd.cut(hist.future45, bins=[-np.inf, -0.005, -0.001, 0.001, 0.005, np.inf], labels=False)
-hist['spread_disc'] = pd.cut(hist.spread, bins=[0, 1, 2, np.inf], labels=False)
-# display(hist.iloc[1021:1025,:])
 
 
+# data = pickle.load( open( "cached_windows/tradingwindows_1611_USTD_BTC_20.p", "rb" ) )
+# data = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist, reset_features=True) for window in data[:])
 
 ## load data
-# data_nov = pickle.load( open( '../cached_windows_60mins/obs_2016-11_USDT_BTC_maxVol100.p', "rb" ) )
-# print("data_nov", len(data_nov))
-# print(data_nov[0][0])
+data_nov = pickle.load( open( '../cached_windows_60mins_V200/obs_2016-11_USDT_BTC_maxVol200.p', "rb" ) )
+print("data_nov", len(data_nov))
 # data_nov = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_nov[:])
 # print(data_nov[0][0])
-
+# 
 data_dec = pickle.load( open( '../cached_windows_60mins/obs_2016-12_USDT_BTC_maxVol100.p', "rb" ) )
 print("data_dec", len(data_dec))
-data_dec = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_dec[:])
-
+# # data_dec = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_dec[:])
+# 
 data_jan = pickle.load( open( '../cached_windows_60mins/obs_2017-01_USDT_BTC_maxVol100.p', "rb" ) )
 print("data_jan", len(data_jan))
-data_jan = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_jan[:])
-
+# # data_jan = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_jan[:])
+# 
 data_feb = pickle.load( open( "../cached_windows_60mins/obs_2017-02_USDT_BTC_maxVol100.p", "rb" ) )
 print("data_feb", len(data_feb))
-data_feb = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_feb[:])
-
+# # data_feb = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_feb[:])
+# 
+data_mar = pickle.load( open( "../cached_windows_60mins_V200/obs_2017-03_USDT_BTC_maxVol200.p", "rb" ) )
+print("data_mar", len(data_mar))
+# # data_mar = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_mar[:])
+# 
+data_apr = pickle.load( open( "../cached_windows_60mins_V200/obs_2017-04_USDT_BTC_maxVol200.p", "rb" ) )
+print("data_apr", len(data_mar))
+# data_apr = Parallel(n_jobs=num_cores, verbose=10)(delayed(add_features_to_orderbooks)(orderbooks=window, hist=hist) for window in data_apr[:])
 
 ################
 ### SETTINGS ###
 ################
-data = data_dec + data_jan + data_feb
+data = data_nov + data_dec + data_jan + data_feb + data_mar + data_apr
+
 T=4
 P=15
 V=70000
@@ -88,8 +98,9 @@ print("Trading windows: {} (each one: {} minutes)".format(len(data), len(data[0]
 ### QTable Agent
 T=4
 P=15
-agent = trainer_QTable(orderbooks=data[:], V=V, T=T, consume=consume, actions=[round(a, 2) for a in actions],
-                    limit_base='incStepUnits', vol_intervals=8,
-                    period_length=P, agent_name='QTable_1612-1702_T4_I8',
-                    state_variables=['volume', 'time', 'direction_disc'], mode='backward')
-agent.save(path="trainedAgents/longterm", overwrite=True)
+print('currBid')
+agent = trainer_QTable(orderbooks=data, V=V, T=T, consume=consume, actions=[round(a, 2) for a in actions],
+                    limit_base='currBid', vol_intervals=8,
+                    period_length=P, agent_name='QTable_1611-1704_T4_I8_VolTime',
+                    state_variables=['volume', 'time'], mode='backward')
+agent.save(path="trainedAgents/longterm_1611_1704_currBid", overwrite=True)

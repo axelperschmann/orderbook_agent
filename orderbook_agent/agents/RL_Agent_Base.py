@@ -13,7 +13,7 @@ from IPython.display import display, clear_output
 import os
 import json
 from tqdm import tqdm, tqdm_notebook
-
+import dill, pickle
 from helper.collect_samples import collect_samples_forward, collect_samples_backward
 
 
@@ -25,6 +25,7 @@ from helper.general_helpers import safe_list_get
 
 
 def unwrap_collect_samples_forward(**kwarg):
+    # kwarg['brain'] = dill.dumps(kwarg['brain'])
     return collect_samples_forward(**kwarg)
 
 def unwrap_collect_samples_backward(**kwarg):
@@ -57,7 +58,7 @@ class RLAgent_Base:
         self.samples['action_idx'] = self.samples.action_idx.astype(int)
 
     def __str__(self):
-        return("RL-Type: {}, Name: '{}'".format(type(self), self.agent_name))
+        return("RL-Type: {}, Name: '{}', state_variables: '{}'".format(type(self), self.agent_name, list(self.state_variables)))
 
     def generate_sample(self, state, action, action_idx, cost, avg, initial_center, timestamp, new_state):
         return pd.DataFrame([state + [round(action, 2)] + [action_idx] + [cost] + [avg] + [initial_center] + [pd.to_datetime(timestamp)] + new_state],
@@ -66,22 +67,28 @@ class RLAgent_Base:
     def append_samples(self, new_samples):
         self.samples = pd.concat([self.samples, new_samples], axis=0, ignore_index=True)
 
-    def collect_samples_parallel(self, orderbooks, epochs=20, guiding_agent=None, random_start=False, exploration=0, mode='forward', append=True):
+    def collect_samples_parallel(self, orderbooks, epochs=20, random_start=False, exploration=0, mode='forward', append=True, limit_num_cores=None):
         assert isinstance(mode, str) and mode in ['forward', 'backward'], "Unknown sample collection mode: '{}'".format(mode)
-        num_cores = multiprocessing.cpu_count()
+        if limit_num_cores:
+            num_cores = limit_num_cores
+        else:
+            num_cores = multiprocessing.cpu_count()
         
         print("Start parallel collection of samples in '{}' mode (num_cores={})".format(mode, num_cores))
 
         if mode=='forward':
-            results = Parallel(n_jobs=num_cores, verbose=10)(delayed(unwrap_collect_samples_forward)(
-                                                                brain=self, window=window, epochs=epochs, guiding_agent=guiding_agent, random_start=random_start, exploration=exploration) 
+            results = Parallel(n_jobs=num_cores, verbose=10)(delayed(unwrap_collect_samples_forward, check_pickle=False)(
+                                                                brain=self, window=window, epochs=epochs, random_start=random_start, exploration=exploration) 
                                                                     for window in orderbooks)
         elif mode=='backward':
             results = Parallel(n_jobs=num_cores, verbose=10)(delayed(unwrap_collect_samples_backward)(
                                                                 brain=self, window=window) 
                                                                     for window in orderbooks)
 
-        self.append_samples(new_samples=pd.concat(results, axis=0, ignore_index=True))
+        new_samples = pd.concat(results, axis=0, ignore_index=True).drop_duplicates()
+        self.append_samples(new_samples=new_samples)
+
+        return new_samples
 
     def copy(self):
         raise NotImplementedError
@@ -114,6 +121,16 @@ class RLAgent_Base:
         elif agent_type=='BatchTree_Agent':
             from agents.BatchTree_Agent import RLAgent_BatchTree
             agent = RLAgent_BatchTree.load(
+                agent_name=agent_name,
+                path=path,
+                infile_agent=infile_agent,
+                infile_model=infile_model,
+                infile_samples=infile_samples,
+                ignore_samples=ignore_samples
+                )
+        elif agent_type=='NN_Agent':
+            from agents.NN_Agent import RLAgent_NN
+            agent = RLAgent_NN.load(
                 agent_name=agent_name,
                 path=path,
                 infile_agent=infile_agent,
@@ -235,7 +252,9 @@ class RLAgent_Base:
             fig, axs = plt.subplots(ncols=2, figsize=(16,5))
 
         df = self.sample_from_Q(vol_intervals=vol_intervals, which_min=which_min, extra_variables=extra_variables)
-        
+        if len(df) == 0:
+            raise ValueError("Could not sample anything")
+
         sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.1f",
                     ax=axs[0], vmin=self.actions[0], vmax=self.actions[-1]) 
         axs[0].set_title('Optimal action')
@@ -268,7 +287,8 @@ class RLAgent_Base:
             ax.set_ylabel("time remaining [periods]")
             ax.set_xlabel("trade volume remaining [%]")
             # ax.set_zlabel("trade volume remaining [%]")
-        
+            # ax.set_ylim((1,4))
+        plt.tight_layout()
         if outfile:
             if outfile[len(outformat):] != outformat:
                 outfile = "{}.{}".format(outfile, outformat)

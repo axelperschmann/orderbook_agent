@@ -16,6 +16,7 @@ from helper.orderbook_trader import *
 from helper.collect_samples import collect_samples_forward, collect_samples_backward
 # from agents.NN_Agent import RLAgent_NN
 from agents.BatchTree_Agent import RLAgent_BatchTree
+from agents.NN_Agent import RLAgent_NN
 from agents.QTable_Agent import QTable_Agent
 
 from functools import wraps
@@ -67,6 +68,45 @@ def trainer_QTable(orderbooks, V, T, period_length, vol_intervals, actions, limi
     print("brain.samples.shape", brain.samples.shape)
     return brain
 
+def trainer_NNAgent(orderbooks, V, T, period_length, actions, limit_base, epochs,
+    agent_name='NN_Agent', consume='cash', lim_stepsize=0.1,
+    state_variables=['volume', 'time'], random_start=True,
+    mode='forward', retraining=24):
+
+    brain = RLAgent_NN(
+        actions=actions,
+        state_variables=state_variables,
+        V=V, T=T, consume=consume,
+        period_length=period_length,
+        lim_stepsize=lim_stepsize,
+        limit_base=limit_base,
+        agent_name=agent_name
+    )
+    print(brain)
+
+    print("Number of orderbook windows: {}".format(len(orderbooks)))
+    
+    splits = math.ceil(len(orderbooks)/retraining)
+    for s in tqdm(range(splits)):
+        print("Splitpoint: {}/{}".format(s, splits))
+        start = s * retraining
+        end = (s+1)*retraining
+        orderbooks_sub = orderbooks[start:end]
+
+        new_samples = brain.collect_samples_parallel(
+            orderbooks=orderbooks_sub, 
+            mode=mode,
+            epochs=epochs,
+            random_start=random_start,
+            exploration=2,
+            limit_num_cores=1)
+        print("new samples:", len(new_samples))
+        print("learn")
+        brain.learn_fromSamples(new_samples=new_samples)
+        brain.heatmap_Q()
+
+    return brain, new_samples
+
 #@timing
 def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epochs,
             agent_name='BatchTree_Agent', consume='cash', lim_stepsize=0.1, 
@@ -86,13 +126,14 @@ def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epoc
     print("Number of orderbook windows: {}".format(len(orderbooks)))
 
     splits = math.ceil(len(orderbooks)/retraining)
+
     for s in tqdm(range(splits)):
         print("Splitpoint: {}/{}".format(s, splits))
         start = s * retraining
         end = (s+1)*retraining
         orderbooks_sub = orderbooks[start:end]
 
-        brain.collect_samples_parallel(
+        new_samples = brain.collect_samples_parallel(
             orderbooks=orderbooks_sub, 
             mode=mode,
             epochs=epochs, 
@@ -101,7 +142,7 @@ def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epoc
             exploration=2)
 
         print("brain.learn_fromSamples() - {} samples".format(len(brain.samples)))
-        brain.learn_fromSamples(nb_it=T*2, verbose=False, n_estimators=400, max_depth=20)
+        brain.learn_fromSamples(new_samples=new_samples, nb_it=T*2, verbose=False, n_estimators=400, max_depth=20)
 
         print("brain.samples.shape", brain.samples.shape)
     return brain

@@ -22,7 +22,7 @@ class OrderbookContainer(object):
         return wrap
 
     def __init__(self, timestamp, bids, asks, features=None, kind='orderbook'):  #enriched=False, 
-        assert isinstance(timestamp, str), "Parameter 'timestamp' is '{}', type={}".format(timestamp, type(timestamp))
+        assert isinstance(timestamp, (str, pd.tslib.Timestamp)), "Parameter 'timestamp' is '{}', type={}".format(timestamp, type(timestamp))
         assert isinstance(bids, pd.DataFrame)  # and len(bids)>0
         assert isinstance(asks, pd.DataFrame)  # and len(asks)>0
         # assert isinstance(enriched, bool)
@@ -345,10 +345,11 @@ class OrderbookContainer(object):
         plt.legend()
         plt.ylabel("Accumulated Volume")
         plt.xlabel("Price Level")
+        plt.ylim((0,80000))
         if outfile:
-            if outfile[-4:] != ".{}".format(outformat):
-                outfile = "{}.{}".format(outfile, outformat)
-            plt.savefig(outfile, format=outformat)
+            # if outfile[-4:] != ".{}".format(outformat):
+            #     outfile = "{}.{}".format(outfile, outformat)
+            plt.savefig(outfile)  #, format=outformat)
             print("Successfully saved '{}'".format(outfile))
             plt.close()
         else:
@@ -357,8 +358,8 @@ class OrderbookContainer(object):
 
 
 def log_mean(x, y):
-    assert isinstance(x, (int, float)), 'Bad value: {}'.format(x)
-    assert isinstance(y, (int, float)), 'Bad value: {}'.format(y)
+    assert isinstance(x, (int, float)), "Bad value: {}, '{}'".format(x, type(x))
+    assert isinstance(y, (int, float)), "Bad value: {}, '{}'".format(y, type(y))
     
     if x == y:
         return x

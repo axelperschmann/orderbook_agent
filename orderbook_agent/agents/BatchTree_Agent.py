@@ -51,7 +51,7 @@ class RLAgent_BatchTree(RLAgent_Base):
     def copy(self, new_name=None):
         params = self.get_params()
 
-        new_agent = QTable_Agent(**params)
+        new_agent = RLAgent_BatchTree(**params)
         if isinstance(new_name, str):
             new_agent.agent_name = new_name
         new_agent.samples = self.samples.copy()
@@ -134,7 +134,7 @@ class RLAgent_BatchTree(RLAgent_Base):
 
         if ignore_samples:
             ql.samples = pd.DataFrame()
-            print("No samples loaded! Parameter 'ignore_samples'==True")
+            # print("No samples loaded! Parameter 'ignore_samples'==True")
         else:
             ql.samples = pd.read_csv(os.path.join(path, infile_samples), parse_dates=['timestamp'], index_col=0)
         ql.model = dill.load(open(os.path.join(path, infile_model), "rb"))
@@ -221,7 +221,7 @@ class RLAgent_BatchTree(RLAgent_Base):
     def sample_from_Q(self, vol_intervals, which_min, extra_variables=None):
         # assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"
         
-        df = pd.DataFrame([], columns=self.state_variables)
+        df = pd.DataFrame([])
         for t in range(1, self.T+1):
             for v in np.linspace(0, self.V, num=vol_intervals+1)[1:]:
                 
@@ -233,10 +233,6 @@ class RLAgent_BatchTree(RLAgent_Base):
 
                 action, action_idx = self.get_action(state, which_min=which_min)
                 minima_count = len(np.where(q == np.nanmin(q))[0])
-                
-                # if (t, v) in [(1,100), (3,10), (4,10), (2,10), (1,10)]:
-                #     print("t{}, v{}  -  action: #{}={:1.1f}".format(t,v, np.nanargmin(q), action))
-                #     print(["{:1.4f}".format(val) for val in q])
                 
                 df_tmp = pd.DataFrame({'time': t,
                                        'state': str(state),

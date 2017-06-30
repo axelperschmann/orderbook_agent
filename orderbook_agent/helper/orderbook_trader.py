@@ -25,7 +25,7 @@ class OrderbookTradingSimulator(object):
             return result
         return wrap
 
-    def __init__(self, orderbooks, volume, tradingperiods, consume='volume', cost_type='slippage', period_length=1):
+    def __init__(self, orderbooks, volume, tradingperiods, consume='volume', cost_type='slippage', period_length=1, max_lengh_tolerance=2):
         assert isinstance(orderbooks, list) and type(orderbooks[0]).__name__ == OrderbookContainer.__name__, "{}".format(type(orderbooks[0]))
         assert len(orderbooks) == tradingperiods*period_length, "Expected len(orderbooks) to equal tradingperiods*period_length, but: {} != {}*{}".format(len(orderbooks), tradingperiods, period_length)
         assert isinstance(volume, (float, int)),  "Parameter 'volume' must be 'float' or 'int' and not 0, given: {}".format(type(volume))
@@ -33,6 +33,14 @@ class OrderbookTradingSimulator(object):
         assert isinstance(consume, str) and consume in ['volume', 'cash'], "Parameter 'consume' must be 'volume' or 'cash', given: {}, {}".format(type(goal_unit), goal_unit)
         assert isinstance(cost_type, str) and cost_type in ['slippage', 'extra_money'], "Parameter 'cost_type' must be 'slippage' or 'extra_money', given: {}, {}".format(type(cost_type), cost_type)
         assert isinstance(period_length, int) and period_length > 0, "Parameter 'period_length' must be 'int', given: {}".format(type(period_length))
+
+        self.period_length = period_length
+        self.timespan = tradingperiods * period_length
+        # check for deviations between presumed and actual orderbook window length
+        window_length = ((pd.to_datetime(orderbooks[-1].timestamp) - pd.to_datetime(orderbooks[0].timestamp)).seconds / 60) + 1
+        if window_length-max_lengh_tolerance > self.timespan:
+            # refuse initialization, when actual and presumed timehorizon differs by more than max_length_tollerance minutes.
+            raise ValueError("Bad orderbook window provided. Presumed a window length of {} minutes, found {} instead.".format(self.timespan-1, window_length))
 
         if consume=='volume':
             cash = 0
@@ -60,16 +68,15 @@ class OrderbookTradingSimulator(object):
             else:
                 raise ValueError("Parameter 'cash' must not be 0, if consume=='cash'!")
 
-        self.masterbook_initial = orderbooks[0].copy()
-        self.orderbooks = orderbooks
-
-        self.diffs = list(map(lambda t: orderbooks[t].compare_with(orderbooks[t-1]), range(1,len(orderbooks))))
-        self.period_length = period_length
-        self.timespan = tradingperiods * period_length
         self.initial_volume = volume
         self.initial_cash = cash
         self.consume = consume
         self.cost_type = cost_type
+
+        self.masterbook_initial = orderbooks[0].copy()
+        self.orderbooks = orderbooks
+
+        self.diffs = list(map(lambda t: orderbooks[t].compare_with(orderbooks[t-1]), range(1,len(orderbooks))))
 
         self.initial_center = orderbooks[0].get_center()
         if consume=='volume':
@@ -138,21 +145,25 @@ class OrderbookTradingSimulator(object):
             if simulate_preceeding_trades and custom_startvolume != self.initial_volume:
                 # adapt masterbook to simulate preceeding trades
                 
-                preTrades = self.initial_volume - custom_startvolume
-                preTrades_per_t = preTrades / self.t
+                preTrades = self.initial_cash - custom_startvolume
+                preTrades_per_t = preTrades#  / self.t
+                print("preTrades_per_t", preTrades_per_t)
 
                 self.masterbook = self.masterbook_initial.copy()
-                
+                display(self.masterbook.head())
                 steps = self.t
                 self.t = 0
                 self.t_initial = 0
                 
+                lim=None
                 for tt in range(steps):
                     self.adjust_masterbook()
-                    self.volume = preTrades_per_t
-                    self.__perform_trade(self.masterbook, limit=None)
+                    self.cash = preTrades_per_t
+                    self.__perform_trade(self.masterbook, limit=lim)
+                    lim = 0.1
                     self.t += 1
                 self.volume = self.initial_volume
+                display(self.masterbook.head())
 
         self.t_initial = self.t
 
@@ -292,6 +303,7 @@ class OrderbookTradingSimulator(object):
                 info['forced'] = True
                 if verbose:
                     print("Run out of time (t={}).\nTrade remaining {:.4f}/{:.4f} shares for current market order price".format(self.t,
+                                                                                                    self.history.VOLUME.values[0]-self.history.volume_traded.sum(), 
                                                                                                     self.history.VOLUME.values[0]))
                 limit = None
                 
@@ -354,7 +366,7 @@ class OrderbookTradingSimulator(object):
 
             self.history.loc[timestamp, 'slippage'] = (info.avg.values[0] - self.initial_center) * self.history.volume_traded.values[-1]                
             if self.cost_type=='slippage':
-                self.history.loc[timestamp, 'cost'] = self.history.loc[timestamp, 'slippage']     / self.initial_center            
+                self.history.loc[timestamp, 'cost'] = self.history.loc[timestamp, 'slippage']     # / self.initial_center            
 
             self.summary['cost'] += self.history.loc[timestamp, 'cost']
             self.summary['volume_traded'] += info.volume_traded.values[0]
