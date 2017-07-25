@@ -2,7 +2,7 @@ from tqdm import tqdm, tqdm_notebook
 import pandas as pd
 import numpy as np
 from IPython.display import display
-from sklearn.ensemble import RandomForestRegressor
+from sklearn.ensemble import RandomForestRegressor, ExtraTreesRegressor
 import random
 import dill
 import json
@@ -55,11 +55,11 @@ class RLAgent_BatchTree(RLAgent_Base):
         if isinstance(new_name, str):
             new_agent.agent_name = new_name
         new_agent.samples = self.samples.copy()
-        new_agent.model = self.model.copy()
+        new_agent.model = self.model
 
         return new_agent
 
-    def save(self, path=".", outfile_agent=None, outfile_model=None, outfile_samples=None, overwrite=False):
+    def save(self, path=".", outfile_agent=None, outfile_model=None, outfile_samples=None, overwrite=False, ignore_samples=False):
         if outfile_agent is None:
             outfile_agent = self.agent_name
         if outfile_model is None:
@@ -99,12 +99,15 @@ class RLAgent_BatchTree(RLAgent_Base):
             print("Saved model: '{}'".format(outfile_model))
 
         ### save samples to disk
-        outfile_samples = os.path.join(path, outfile_samples)
-        if os.path.isfile(outfile_samples) and overwrite is False:
-            print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+        if ignore_samples:
+            print("ignoring samples")
         else:
-            self.samples.to_csv(outfile_samples)
-            print("Saved samples: '{}'".format(outfile_samples))
+            outfile_samples = os.path.join(path, outfile_samples)
+            if os.path.isfile(outfile_samples) and overwrite is False:
+                print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+            else:
+                self.samples.to_csv(outfile_samples)
+                print("Saved samples: '{}'".format(outfile_samples))
 
     def load(agent_name=None, path='.', infile_agent=None, infile_model=None, infile_samples=None, ignore_samples=False):
         if agent_name is None:
@@ -179,7 +182,7 @@ class RLAgent_BatchTree(RLAgent_Base):
 
     def learn_fromSamples(self, nb_it=None, n_estimators=20, max_depth=12, verbose=False):
         if nb_it is None:
-            nb_it = self.T +1
+            nb_it = self.T
 
         reg = None
         d_rate = 0.95
@@ -189,6 +192,11 @@ class RLAgent_BatchTree(RLAgent_Base):
         df.insert(loc=len(df.columns)-self.state_dim, column='min_cost', value=df['cost'])
         df['min_cost'] = df['cost']
 
+        if self.state_variables_actions != False:
+            state_variables = self.state_variables_actions
+        else:
+            state_variables = self.state_variables
+        print("x")
         for n in tqdm(range(nb_it)):
             if verbose:
                 print("n", n)
@@ -196,10 +204,14 @@ class RLAgent_BatchTree(RLAgent_Base):
             # training an estimate of q_1
             if reg is not None:
                 # using previous classifier as estimate of q_n-1
-                states = df[["{}_n".format(var) for var in self.state_variables]].copy()
-                #display("shape", states.shape, states.dropna().shape, df.shape, df.dropna().shape)
+                states = df[["{}_n".format(var) for var in state_variables]].copy()
+
+                
                 preds = []
+
                 for a in self.actions:
+                    if verbose:
+                        print("a", a)
                     states['action'] = a
                     # display(a, states.shape, states.dropna().shape)
                     preds.append(reg.predict(states))
@@ -210,13 +222,32 @@ class RLAgent_BatchTree(RLAgent_Base):
                 df['min_cost'] = (df['cost'] + (1 - df['done']) * (preds.min() * d_rate))
                 
             reg = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth)
-            reg = reg.fit(df[self.state_variables+['action']], df['min_cost'])
+            reg = ExtraTreesRegressor(n_estimators=n_estimators, max_depth=max_depth)
+            print("fit")
+            X = df[state_variables+['action']]
+            y = df['min_cost']
+            display(X.head())
+            display(y.head())
+            reg = reg.fit(X, y)
+            print("fit done")
             if verbose:
-                print("Score:", reg.score(df[self.state_variables+['action']], df['min_cost']))
+                print("Score:", reg.score(df[state_variables+['action']], df['min_cost']))
                 print("Feature importances:", reg.feature_importances_)
             self.model = reg
 
-            #self.heatmap_Q(show_traces=False, show_minima_count=True, vol_intervals=10)
+            if len(state_variables) == 2:
+                self.heatmap_Q(
+                    show_traces=False,
+                    show_minima_count=False,
+                    vol_intervals=24)
+            if (len(state_variables) == 3) and ('spread' in state_variables):
+                self.heatmap_Q(
+                    show_traces=False,
+                    show_minima_count=False,
+                    vol_intervals=24,
+                    extra_variables={'spread': 0.001845},
+                    outfile='{}_{}'.format(self.agent_name, n)
+                    )
 
     def sample_from_Q(self, vol_intervals, which_min, extra_variables=None):
         # assert len(self.state_variables) == 2, "Not yet implemented for more than 2 variables in state"

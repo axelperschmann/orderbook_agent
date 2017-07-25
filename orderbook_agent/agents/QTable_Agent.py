@@ -122,7 +122,7 @@ class QTable_Agent(RLAgent_Base):
         return new_agent
 
 
-    def save(self, path=".", outfile_agent=None, outfile_samples=None, overwrite=False):
+    def save(self, path=".", outfile_agent=None, outfile_samples=None, overwrite=False, ignore_samples=False):
         if outfile_agent is None:
             outfile_agent = self.agent_name
         if outfile_samples is None:
@@ -149,12 +149,15 @@ class QTable_Agent(RLAgent_Base):
             print("Saved agent: '{}'".format(outfile_agent))
 
         # save samples to disk
-        outfile_samples = os.path.join(path, outfile_samples)
-        if os.path.isfile(outfile_samples) and overwrite is False:
-            print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+        if ignore_samples:
+            print("ignoring samples")
         else:
-            self.samples.to_csv(outfile_samples)
-            print("Saved samples: '{}'".format(outfile_samples))
+            outfile_samples = os.path.join(path, outfile_samples)
+            if os.path.isfile(outfile_samples) and overwrite is False:
+                print("File '{}'  exists! Do not overwrite!".format(outfile_samples))
+            else:
+                self.samples.to_csv(outfile_samples)
+                print("Saved samples: '{}'".format(outfile_samples))
 
     def load(agent_name=None, path='.', infile_agent=None, infile_samples=None, ignore_samples=False):
         if agent_name is None:

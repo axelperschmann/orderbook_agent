@@ -1,5 +1,8 @@
 import multiprocessing
 from joblib import Parallel, delayed
+import dill, pickle
+from functools import partial
+import unicodedata
 
 import pandas as pd
 import numpy as np
@@ -11,6 +14,7 @@ import sys
 sys.path.append('..')
 from helper.orderbook_container import OrderbookContainer
 from helper.orderbook_trader import OrderbookTradingSimulator
+from agents.NN_Agent import RLAgent_NN
 
 
 def is_number(s):
@@ -21,17 +25,32 @@ def is_number(s):
         pass
 
     try:
-        import unicodedata
         unicodedata.numeric(s)
         return True
     except (TypeError, ValueError):
         pass
     return False
 
-def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfliers=False, hline=True, outfile=None):
+def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfliers=False, hline=True, outfile=None, verbose=False):
         assert isinstance(hline, (str, bool)) or hline is None
-                
-        experiments.plot.box(showmeans=True, color={'medians':'green'}, figsize=(12, 8), showfliers=showfliers)
+        
+        fig, ax = plt.subplots(figsize=(8, 4))
+        experiments.plot.box(showmeans=True, color={'medians':'green'}, ax=ax, showfliers=showfliers)
+        
+        if verbose:
+            perf = pd.DataFrame(experiments.mean(), columns=['slippage'])
+            perf['med'] = experiments.median()
+            perf['std'] = experiments.std()
+            perf['perf_2'] = (experiments.mean() / experiments["2"].mean() * 100-100).map('{:,.2f}%'.format)
+
+            perf['perf_4'] = (experiments.mean() / experiments["4"].mean() * 100-100).map('{:,.2f}%'.format)
+            perf['perf_M'] = (experiments.mean() / experiments["MarketOrder"].mean() * 100-100).map('{:,.2f}%'.format)
+            # perf['perf_VolTime'] = (experiments.mean() / experiments["VolTime"].mean() * 100-100).map('{:,.2f}%'.format)
+        
+            perf = round(perf, 2)
+            print(experiments.mean().argmin())
+            display(perf)
+            print(perf.to_latex())
         
         if vlines is None:
             simpleStrategies_count = np.sum([is_number(elem) for elem in experiments.columns])
@@ -47,9 +66,12 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
             plt.axvline(line + 0.5, color='black')
         
         if hline in experiments.columns:
-            mean_ = experiments.mean()
-            plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label="mean '{}':  {}".format(mean_.argmin(), mean_.min()))
-            plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label="median '{}':  {}".format(mean_.argmin(), mean_.min()))
+            plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label="mean '{}':  {:1.4f}".format(hline, experiments[hline].mean()))
+            plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label="median '{}':  {:1.4f}".format(hline, experiments[hline].median()))
+        elif hline =='min':
+            hline = experiments.mean().argmin()
+            plt.axhline(experiments[hline].mean(), color='red', alpha=0.5, linewidth=1, linestyle='--', label="mean '{}':  {:1.4f}".format(hline, experiments[hline].mean()))
+            plt.axhline(experiments[hline].median(), color='green', alpha=0.5, linewidth=1, linestyle='--', label="median '{}':  {:1.4f}".format(hline, experiments[hline].median()))
 
 
         title = "{} trading periods  \n{} - {}".format(len(experiments), experiments.index[0], experiments.index[-1])
@@ -63,9 +85,10 @@ def plot_evaluation_costs(experiments, vlines=None, name=None, ylim=None, showfl
         plt.xticks(rotation=90)
         if ylim is not None:
             plt.ylim(ylim)    
-        plt.legend(loc='best')
+        plt.legend(loc='upper left')
         
         if outfile:
+            plt.gcf().subplots_adjust(bottom=0.23)
             plt.savefig(outfile)
             print("Saved figure to '{}'".format(outfile))
             plt.close()
@@ -89,14 +112,15 @@ def evaluate(testdata, agents=None, evaluate_actions=[], custom_strategies=None,
         if isinstance(agents, dict):
             evaluate_agents.update(agents)
 
+        print(evaluate_agents.keys())
         strategy_count = len(evaluate_agents) + len(evaluate_actions)
         if custom_strategies:
             strategy_count += len(custom_strategies)
-
+        
         if limit_num_cores > 1:
             print("Start parallel evalutions of {} strategies over {} tradingperiods. (num_cores={})".format(strategy_count, len(testdata), limit_num_cores))
 
-            results = Parallel(n_jobs=limit_num_cores, verbose=5)(delayed(evaluate_window)(
+            results = Parallel(n_jobs=limit_num_cores, verbose=15)(delayed(evaluate_window)(
                 evaluate_agents=evaluate_agents, baseline=baseline_agent,
                 custom_strategies=custom_strategies,
                 evaluate_actions=evaluate_actions,
@@ -121,6 +145,7 @@ def evaluate(testdata, agents=None, evaluate_actions=[], custom_strategies=None,
 
 def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actions, window,
             verbose=False):
+
         baseline_agent = evaluate_agents[baseline]
 
         costs = pd.DataFrame([])
@@ -136,7 +161,12 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
             lim_increments = init_center * (baseline_agent.lim_stepsize / 100)
 
             for agentname in evaluate_agents.keys():
+                
                 agent = evaluate_agents[agentname]
+                if isinstance(agent, dict):
+                    # can't pickle.dumps or dill.dumps tensorflow graphs and sessions ... this is a hacky workaround:
+                    agent = RLAgent_NN.load(agent_name=agent.get('agent_name'), path=agent.get('path'), ignore_samples=True)
+                    
 
                 ots.reset()
                 ots.period_length = agent.period_length
@@ -146,6 +176,8 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                     timepoint = t*agent.period_length
                     
                     ob_now = window[timepoint]
+                    if 'BT' in agentname:
+                        ob_now = ots.masterbook
                     ob_next = window[min(timepoint+baseline_agent.period_length, len(window)-1)]
                     price_incScale = int(round(ob_now.get_center()/lim_increments, 3))
                     
@@ -161,6 +193,7 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                                                 volume_left=volume,
                                                 orderbook=ob_now,
                                                 orderbook_cheat=ob_next)
+
                     if agent.agent_type=='NN_Agent':
                         state = pd.DataFrame(state).T
 
@@ -189,6 +222,7 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                     print(" slippage", ots.history.slippage.sum())
                     print(agent.actions)
                     display(ots.history)
+
 
                 costs.loc[index, agentname] = ots.history.cost.sum()
                 slippage.loc[index, agentname] = ots.history.slippage.sum()
@@ -249,6 +283,12 @@ def evaluate_window(evaluate_agents, baseline, custom_strategies, evaluate_actio
                 # if verbose:
                 #     display(ots.history)
         except AssertionError as err:
-            print("Couldn't trade {}, due to {}".format(window[0].timestamp, err))
+            print("Couldn't trade {}: '{}'".format(window[0].timestamp, err))
+        except ValueError as err:
+            # print("Skipping orderbook window:", window[0].timestamp, err)
+            pass
 
         return costs, slippage
+
+if __name__ == '__main__':
+    pass

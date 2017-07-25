@@ -5,6 +5,7 @@ import random
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.ticker import FormatStrFormatter
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import math
@@ -53,7 +54,13 @@ class RLAgent_Base:
         self.normalized = normalized
         self.limit_base = limit_base
 
-        self.columns = state_variables + ['action', 'action_idx', 'cost', 'avg', 'initial_center', 'timestamp'] + [var + "_n" for var in state_variables]
+        if 'level2data' in state_variables:
+            self.state_variables_actions = state_variables[:-1] + ['_a_{}'.format(a) for a in self.actions]
+            self.columns = self.state_variables_actions + ['action', 'action_idx', 'cost', 'avg', 'initial_center', 'timestamp'] + [var + "_n" for var in self.state_variables_actions]
+        else:
+            self.columns = state_variables + ['action', 'action_idx', 'cost', 'avg', 'initial_center', 'timestamp'] + [var + "_n" for var in state_variables]
+            self.state_variables_actions = False
+
         self.samples = pd.DataFrame(samples, columns=self.columns)
         self.samples['action_idx'] = self.samples.action_idx.astype(int)
 
@@ -148,10 +155,14 @@ class RLAgent_Base:
         assert isinstance(time_left, (int, float)), "Parameter 'time_left' must be of type 'int', given: '{}'".format(type(time_left))
         assert isinstance(volume_left, (int, np.int64, float, np.float)), "Parameter 'volume_left' must be of type 'int' or 'float', given: '{}'".format(type(volume_left))
         assert (type(orderbook).__name__ == OrderbookContainer.__name__) or orderbook is None, "Parameter 'orderbook' [if provided] must be of type 'Orderbook', given: '{}'".format(type(orderbook))
-
+        if orderbook is not None:
+            orderbook = orderbook.copy()
+        else:
+            if 'orderbook' in extra_variables.keys():
+                orderbook = extra_variables['orderbook']
         if extra_variables is not None:
             for key in extra_variables.keys():
-                assert key in self.state_variables, "extra_variables '{}' is not contained in agents state_variables: {}".format(key, self.state_variables)
+                assert key in self.state_variables + ['orderbook'], "extra_variables '{}' is not contained in agents state_variables: {}".format(key, self.state_variables)
         # allowed_variable_set = ['volume', 'time', 'spread']
         # assert set(self.state_variables).issubset(allowed_variable_set), "Parameter 'state_variables' must be a subset of {}".format(allowed_variable_set)
 
@@ -187,15 +198,35 @@ class RLAgent_Base:
                 price = orderbook.get_center()
                 val = (fut_price/price) - 1
                 state.append(val)
+            elif feat == 'level2data':
+                orderbook.asks['Volume'] = orderbook.asks.index * orderbook.asks.Amount
+                orderbook.asks['accVolume'] = orderbook.asks.Volume.cumsum()
+
+                orderbook.bids['Volume'] = orderbook.bids.index * orderbook.bids.Amount
+                orderbook.bids['accVolume'] = orderbook.bids.Volume.cumsum()
+                
+                if self.limit_base == 'currAsk':
+                    limit_base = orderbook.get_ask()
+                for action in self.actions:
+                    
+                    lim = limit_base * (1. + (action/100.)*self.lim_stepsize)
+
+                    sub = orderbook.asks[orderbook.asks.index <= lim].accVolume
+                    if len(sub) > 0:
+                        val = sub.values[-1]
+                    else:
+                        sub = orderbook.bids[orderbook.bids.index >= lim].accVolume
+                        if len(sub) > 0:
+                            val = -sub.values[-1] 
+                            
+                        else:
+                            val = 0
+
+                    state.append(round(val, 4))
 
             else:
                 val = float(orderbook.features[feat])
-
                 state.append(val)
-                
-            #else:
-            #    raise NotImplemented
-
         return list(state)
 
     def get_action_index(self, action):
@@ -255,21 +286,22 @@ class RLAgent_Base:
         if len(df) == 0:
             raise ValueError("Could not sample anything")
 
-        sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.1f",
+        sns.heatmap(df.pivot('time', 'volume', 'action'), annot=True, fmt="1.0f",
                     ax=axs[0], vmin=self.actions[0], vmax=self.actions[-1]) 
         axs[0].set_title('Optimal action')
         
-        sns.heatmap(df.pivot('time', 'volume', 'q'), annot=True, annot_kws={'rotation':90}, fmt="1.2f", ax=axs[1])
+        sns.heatmap(df.pivot('time', 'volume', 'q'), annot=True, annot_kws={'rotation':90}, fmt="1.2f",  ax=axs[1], vmin=0, vmax=300)
         axs[1].set_title('Optimal Q value')
         
         if show_minima_count:
             sns.heatmap(df.pivot('time', 'volume', 'minima_count'), annot=True, ax=axs[2])
             axs[2].set_title('Minima Count')
         
-        title = "{}: Q function (T:{}, V:{})".format(self.agent_name, self.T*self.period_length, self.V)
+        title = "{}: (T:{}, V:{})".format(self.agent_name, self.T*self.period_length, self.V)
         if epoch is not None:
             title = "{}, epochs:{}".format(title, epoch+1)
-        if extra_variables is not None:
+        
+        if extra_variables is not None and 'orderbook' not in extra_variables:
             title = "{}, extra_variables: {}".format(title, extra_variables)
         fig.suptitle(title)
 
@@ -283,7 +315,11 @@ class RLAgent_Base:
             
         for ax in axs:
             ax.invert_xaxis()
-            ax.set_xticklabels(ax.get_xticklabels(), rotation=45)
+
+            labels = ["{:1.0f}".format(float(l.get_text())) for l in ax.get_xticklabels()]
+            ax.set_xticklabels(labels, rotation=45)
+            # ax.xaxis.set_major_formatter(FormatStrFormatter('%.1f'))
+            
             ax.set_ylabel("time remaining [periods]")
             ax.set_xlabel("trade volume remaining [%]")
             # ax.set_zlabel("trade volume remaining [%]")

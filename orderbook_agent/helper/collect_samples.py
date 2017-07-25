@@ -54,8 +54,10 @@ def collect_samples_backward(brain, window):
                                          orderbook=ob_now)
 
             for action_idx, action in enumerate(brain.actions):
-                ots.reset(custom_starttime=tt, custom_startvolume=vol)
+                simulate_preceeding_trades = False
 
+                ots.reset(custom_starttime=tt, custom_startvolume=vol, simulate_preceeding_trades=simulate_preceeding_trades)
+                
                 if brain.limit_base == 'currAsk':
                     limit = ob_now.get_ask() * (1. + (action/100.)*brain.lim_stepsize)
                     summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
@@ -125,10 +127,12 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
         action_coll[t+1] = []
 
     dead_end_counter = 0
-    for e in tqdm(range(epochs), leave=False, desc='epochs {}'.format(dead_end_counter)):
+    for e in range(epochs):
         if dead_end_counter >= max_dead_ends:
             # exploration keeps running into dead ends. better stop now!
             return samples
+        if dead_end_counter >= 3:
+            print("dead_end_counter '{}': {}".format(e, dead_end_counter))
         epsilon = 1.0/20**(e/epochs)  # vanishing exploration-rate: 1.0 to 0.05
         # print("{}: epsilon = {}".format(e, epsilon))
 
@@ -146,13 +150,14 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
         
         for t in range(startpoint, brain.T):
             time_left = brain.T - t
-            ob_now = window[ots.t]
-            ob_next = window[min(ots.t+brain.period_length, len(window)-1)]
-            ob_next_next = window[min(ots.t+(brain.period_length*2), len(window)-1)]
-
+            timestamp = window[ots.t].timestamp
+            # ob_now = window[ots.t]
+            # ob_next = window[min(ots.t+brain.period_length, len(window)-1)]
+            # ob_next_next = window[min(ots.t+(brain.period_length*2), len(window)-1)]
+            
             state = brain.generate_state(time_left=time_left, 
                                          volume_left=ots.get_units_left(),
-                                         orderbook=ob_now, orderbook_cheat=ob_next)
+                                         orderbook=ots.masterbook)  #, orderbook_cheat=ob_next)
 
             if random.random() < epsilon:
                 # if this combination has been tried before (and led to an completed trade execution),
@@ -189,7 +194,7 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
             action_hist.append(action_idx)
 
             if brain.limit_base == 'currAsk':
-                limit = a
+                limit = ots.masterbook.get_ask() * (1. + (action/100.)*brain.lim_stepsize)
                 summary = ots.trade(limit=limit, verbose=False, extrainfo={'ACTION':action})
             elif brain.limit_base == 'incStepUnits':
                 price_incScale = int(ob_now.get_center()/lim_increments)
@@ -202,8 +207,8 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
 
             new_state = brain.generate_state(time_left=time_left-1,
                                              volume_left=ots.get_units_left(),
-                                             orderbook=ob_next, orderbook_cheat=ob_next_next)
-
+                                             orderbook=ots.masterbook)  #, orderbook_cheat=ob_next_next)
+        
             cost = ots.history.cost.values[-1]
             
             new_sample = brain.generate_sample(
@@ -211,7 +216,7 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
                     action=action,
                     action_idx=action_idx,
                     cost=cost,
-                    timestamp=ob_now.timestamp,
+                    timestamp=timestamp,
                     avg=ots.history.avg[-1],
                     initial_center=ots.initial_center,
                     new_state=new_state
@@ -220,9 +225,7 @@ def collect_samples_forward(brain, window, epochs, random_start=True, exploratio
             
             if ots.check_is_done():
                 # check if strategy exact same has been tried before for this orderbook window
-                if action_hist in action_coll[len(action_hist)]:
-                    raise ValueError("This should never happen ;). Identical strategy tried before: {} {}".format(e, action_hist))
-                else:
+                if action_hist not in action_coll[len(action_hist)]:
                     action_coll[len(action_hist)].append(action_hist)
                     dead_end_counter = 0
                 break

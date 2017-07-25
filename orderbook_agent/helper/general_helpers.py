@@ -46,7 +46,7 @@ def discretize_hist_feature(hist, feature, test_start_date=None, bins=5):
     return df
 
 def addMarketFeatures_toSamples(samples, hist, market_features, 
-                                state_variables=None, period_length=15):
+                                state_variables=None, period_length=15, fixedMarketVariables=False):
     df = samples.copy()
 
     if samples.isnull().any().any():
@@ -60,10 +60,14 @@ def addMarketFeatures_toSamples(samples, hist, market_features,
         if f_n in df.columns:
             df.drop(f_n, inplace=True, axis=1)
 
+        if fixedMarketVariables:
+            # hacky solution to fixMarketVariables across orderbook windows
+            period_length=0
+
         df.insert(loc=2+i, column=f, 
                   value=hist.loc[df.timestamp, f].values[:len(df)],
                  allow_duplicates=True)
-
+        
         df.insert(loc=df.shape[1], column=f_n,
                   value=hist.loc[df.timestamp + pd.Timedelta(minutes=period_length), f].values[:len(df)],
                   allow_duplicates=True)
@@ -82,7 +86,7 @@ def addMarketFeatures_toSamples(samples, hist, market_features,
     return df
 
 
-def add_features_to_orderbooks(orderbooks, hist, features=None, reset_features=False):
+def add_features_to_orderbooks(orderbooks, hist, features=None, reset_features=False, fixedMarketVariables=False):
     
     # if features is None:
     direction = orderbooks[-1].get_center() / orderbooks[0].get_center()
@@ -96,10 +100,17 @@ def add_features_to_orderbooks(orderbooks, hist, features=None, reset_features=F
         direction_disc = -1.
     else:
         direction_disc = 0.
+
+
     
     for ob in orderbooks:
         ob.norm_factor = 1.
-        ts = pd.to_datetime(ob.timestamp)
+        if fixedMarketVariables:
+            # constant features across whole orderbook window
+            ts = pd.to_datetime(orderbooks[0].timestamp)
+        else:
+            # features observed at variable timepoints
+            ts = pd.to_datetime(ob.timestamp)
 
         if features is not None:
             if reset_features or not hasattr(ob, 'features'):
