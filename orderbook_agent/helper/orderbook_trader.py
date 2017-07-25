@@ -68,7 +68,7 @@ class OrderbookTradingSimulator(object):
             else:
                 raise ValueError("Parameter 'cash' must not be 0, if consume=='cash'!")
 
-        self.initial_volume = volume
+        self.initial_volume = float(volume)
         self.initial_cash = cash
         self.consume = consume
         self.cost_type = cost_type
@@ -95,6 +95,10 @@ class OrderbookTradingSimulator(object):
         # print("initial_center:", self.initial_center)
         self.timestamps = [ob.timestamp for ob in orderbooks]
 
+        self.prev_masterbook = None
+        self.prev_custom_startvolume = None
+        self.prev_custom_starttime = None
+        
         self.reset()
 
     def get_units_left(self):
@@ -142,28 +146,41 @@ class OrderbookTradingSimulator(object):
                 self.volume = 0
                 self.cash = custom_startvolume
 
-            if simulate_preceeding_trades and custom_startvolume != self.initial_volume:
+            if simulate_preceeding_trades and custom_startvolume != float(self.initial_cash):
                 # adapt masterbook to simulate preceeding trades
-                
                 preTrades = self.initial_cash - custom_startvolume
-                preTrades_per_t = preTrades#  / self.t
-                print("preTrades_per_t", preTrades_per_t)
 
                 self.masterbook = self.masterbook_initial.copy()
-                display(self.masterbook.head())
+                
                 steps = self.t
+                
                 self.t = 0
                 self.t_initial = 0
                 
-                lim=None
-                for tt in range(steps):
-                    self.adjust_masterbook()
-                    self.cash = preTrades_per_t
-                    self.__perform_trade(self.masterbook, limit=lim)
-                    lim = 0.1
-                    self.t += 1
+                if (custom_startvolume == self.prev_custom_startvolume) and (custom_starttime == self.prev_custom_starttime):
+                    # print("previously observed")
+                    self.masterbook = self.prev_masterbook
+                    self.t = steps
+                else:
+                    # print("new case")
+                    if steps == 0:
+                        self.cash = preTrades
+                        self.__perform_trade(self.masterbook, limit=None)
+                    else:
+                        preTrades_per_t = preTrades  / steps
+                        for tt in range(steps):
+                            self.cash = preTrades_per_t
+                            self.__perform_trade(self.masterbook, limit=None)
+                            self.t += 1
+                            self.adjust_masterbook()
+
+                # remember modified masterbook, to potentially restore at next reset
+                self.prev_masterbook = self.masterbook.copy()
+                self.prev_custom_startvolume = custom_startvolume
+                self.prev_custom_starttime = custom_starttime
+                
                 self.volume = self.initial_volume
-                display(self.masterbook.head())
+                self.cash = custom_startvolume
 
         self.t_initial = self.t
 
@@ -363,7 +380,6 @@ class OrderbookTradingSimulator(object):
                 info['extra_shares'] = extra_shares
                 self.summary['extra_shares'] += info.extra_shares.values[0]
             
-
             self.history.loc[timestamp, 'slippage'] = (info.avg.values[0] - self.initial_center) * self.history.volume_traded.values[-1]                
             if self.cost_type=='slippage':
                 self.history.loc[timestamp, 'cost'] = self.history.loc[timestamp, 'slippage']     # / self.initial_center            
