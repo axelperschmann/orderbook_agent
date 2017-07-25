@@ -111,7 +111,7 @@ def trainer_NNAgent(orderbooks, V, T, period_length, actions, limit_base, epochs
 def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epochs,
             agent_name='BatchTree_Agent', consume='cash', lim_stepsize=0.1, 
             state_variables=['volume', 'time'], guiding_agent=None, random_start=True,
-            mode='forward', retraining=24):
+            mode='forward', retraining=24, savepath=None):
     brain = RLAgent_BatchTree(
         actions=actions,
         state_variables=state_variables,
@@ -136,13 +136,20 @@ def trainer_BatchTree(orderbooks, V, T, period_length, actions, limit_base, epoc
         new_samples = brain.collect_samples_parallel(
             orderbooks=orderbooks_sub, 
             mode=mode,
-            epochs=epochs, 
-            guiding_agent=guiding_agent,
+            epochs=epochs,
             random_start=random_start,
             exploration=2)
 
+        # path = 'trainedAgents/longterm_1611_1704_simulate_preceeding_trades'
+        # print("save to", path)
+        # brain.save(path=path, overwrite=True)
+
         print("brain.learn_fromSamples() - {} samples".format(len(brain.samples)))
-        brain.learn_fromSamples(new_samples=new_samples, nb_it=T*2, verbose=False, n_estimators=400, max_depth=20)
+        brain.learn_fromSamples(nb_it=T, verbose=True, n_estimators=150, max_depth=10)
+
+        if savepath is not None:
+            brain.agent_name = "{}_samples{}".format(agent_name, len(brain.samples))
+            brain.save(path=savepath)
 
         print("brain.samples.shape", brain.samples.shape)
     return brain
