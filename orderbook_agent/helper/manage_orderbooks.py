@@ -252,19 +252,15 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
             ots.volume -= summary['volume']
             ots.cash += summary['cash_traded']
 
-            if t == 15:
-                display(ots.masterbook.head(10))
-                ots.masterbook.plot()
-
             traded_volume.append(summary['volume'])
             volume_left.append(ots.get_units_left())
             
             cost = 0
             avg = np.nan
-            if abs(summary['volume']) > 0:
+            if abs(summary['volume']) > 0.0001:
                 if consume=='volume':
                     avg = abs(summary['cash_traded']) / summary['volume']
-                    cost = summary['volume'] * (avg - ots.initial_center) / ots.market_slippage
+                    cost = summary['volume'] * (avg - ots.initial_center)# / ots.market_slippage
                 elif consume=='cash':
                     avg = abs(summary['cash_traded']) / summary['volume']
                     cost = (avg - initial_center) # * summary['cash_traded']
@@ -273,6 +269,8 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
             avgs.append(avg)
             if abs(ots.volume) < 1e-10:
                 break
+
+
         
         axs[1].bar(range(len(traded_volume)), traded_volume, align='edge', alpha=0.7)
         axs[1].set_ylabel("Traded shares")
@@ -284,14 +282,18 @@ def plot_episode(episode_windows, volume=100, consume='volume', figsize=(8,6), y
         axs[1].set_xlabel("t")
         ax2.axhline(0, color='black', alpha=0.5)
 
-        axs[2].set_ylim((np.nanmin(avgs), np.nanmax(avgs)))
+        axs[2].set_ylim((np.nanmin(avgs)-1, np.nanmax(avgs)+1))
         axs[2].bar(range(len(avgs)), avgs, align='edge', alpha=0.7, label='avg price')
+        
+        if limits is not None:
+            axs[2].plot(range(len(avgs)), limits_y, color='grey', alpha=0.3, drawstyle='steps-post', label='Limits')
         axs[2].set_ylabel("avg price")
-
+        
         ax4 = axs[2].twinx()
 
         ax4.step(range(len(costs)), np.cumsum(np.array(costs)), where='mid', color='red', alpha=0.6, label='acc costs')
         ax4.step(range(len(costs)), np.cumsum(np.array(costs))/np.cumsum(np.array(traded_volume))*volume, where='mid', color='green', alpha=0.6, label='expected costs')
+
         ax4.set_ylabel("Costs")
         ax4.legend(loc='best')
         ax4.set_xlim((-1,len(timestamps)))
